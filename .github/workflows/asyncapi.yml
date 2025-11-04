@@ -45,13 +45,13 @@ jobs:
         run: composer asyncapi-aggregate
 
       - name: Validate AsyncAPI document
-        uses: asyncapi/cli@v4.0.0
+        uses: asyncapi/cli@v4.1.1
         with:
           command: validate
           filepath: events/asyncapi.aggregated.yml
 
       - name: Generate AsyncAPI documentation
-        uses: asyncapi/cli@v4.0.0
+        uses: asyncapi/cli@v4.1.1
         with:
           command: generate
           filepath: events/asyncapi.aggregated.yml
