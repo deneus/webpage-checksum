@@ -22,8 +22,8 @@ jobs:
       - name: Run checksum check
         env:
           WEBPAGE_URL: ${{ secrets.WEBPAGE_URL }}
-          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
-          WHATSAPP_API_KEY: ${{ secrets.WHATSAPP_API_KEY }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
         run: php check-page.php
       
       - name: Commit checksum changes

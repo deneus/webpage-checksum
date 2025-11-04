@@ -17,16 +17,16 @@ A PHP script that checksums the HTML of a webpage daily using GitHub Actions.
      2. Send the message **"I allow callmebot to send me messages"** to that contact
      3. Wait for the API key response (usually within 2 minutes)
    - Add two GitHub secrets:
-     - Name: `WHATSAPP_PHONE` - Your phone number with country code (e.g., `+34123123123`)
-     - Name: `WHATSAPP_API_KEY` - The API key you received from CallMeBot
+     - Name: `CALLMEBOT_PHONE` - Your phone number with country code (e.g., `+34123123123`)
+     - Name: `CALLMEBOT_API_KEY` - The API key you received from CallMeBot
 
 3. **The workflow will run daily at 00:00 UTC**
 
 4. **Manual testing:**
    ```bash
    export WEBPAGE_URL="https://example.com"
-   export WHATSAPP_PHONE="+34123123123"
-   export WHATSAPP_API_KEY="your_api_key_here"
+   export CALLMEBOT_PHONE="+34123123123"
+   export CALLMEBOT_API_KEY="your_api_key_here"
    php check-page.php
    ```
    

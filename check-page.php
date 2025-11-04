@@ -87,8 +87,8 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     file_put_contents($checksumFile, $checksum);
     
     // Send WhatsApp notification.
-    $whatsappPhone = getenv('WHATSAPP_PHONE');
-    $whatsappApiKey = getenv('WHATSAPP_API_KEY');
+    $whatsappPhone = getenv('CALLMEBOT_PHONE');
+    $whatsappApiKey = getenv('CALLMEBOT_API_KEY');
     
     if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
         $message = sprintf(
