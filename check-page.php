@@ -5,7 +5,41 @@
  * 
  * Fetches HTML from a webpage and calculates its checksum.
  * Compares with previous checksum to detect changes.
+ * Sends WhatsApp notification when checksum changes.
  */
+
+/**
+ * Send WhatsApp notification using CallMeBot API.
+ * 
+ * @param string $phoneNumber Phone number with country code.
+ * @param string $message Message to send.
+ * @param string $apiKey CallMeBot API key.
+ * @return bool True if message sent successfully, false otherwise.
+ */
+function sendWhatsAppNotification($phoneNumber, $message, $apiKey) {
+    if (empty($phoneNumber) || empty($apiKey)) {
+        error_log("Error: WhatsApp phone number or API key not provided.");
+        return false;
+    }
+    
+    // Build the API URL.
+    $apiUrl = sprintf(
+        'https://api.callmebot.com/whatsapp.php?phone=%s&text=%s&apikey=%s',
+        urlencode($phoneNumber),
+        urlencode($message),
+        urlencode($apiKey)
+    );
+    
+    // Send the request.
+    $response = @file_get_contents($apiUrl);
+    
+    if ($response === false) {
+        error_log("Error: Failed to send WhatsApp notification.");
+        return false;
+    }
+    
+    return true;
+}
 
 // Get the URL from environment variable or command line argument.
 $url = getenv('WEBPAGE_URL') ?: ($argv[1] ?? null);
@@ -51,6 +85,32 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     
     // Store the new checksum.
     file_put_contents($checksumFile, $checksum);
+    
+    // Send WhatsApp notification.
+    $whatsappPhone = getenv('WHATSAPP_PHONE');
+    $whatsappApiKey = getenv('WHATSAPP_API_KEY');
+    
+    if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
+        $message = sprintf(
+            "🔔 Webpage Checksum Changed!\n\n" .
+            "URL: %s\n" .
+            "Date: %s\n" .
+            "Previous: %s\n" .
+            "Current: %s",
+            $url,
+            $timestamp,
+            $previousChecksum,
+            $checksum
+        );
+        
+        if (sendWhatsAppNotification($whatsappPhone, $message, $whatsappApiKey)) {
+            echo "WhatsApp notification sent successfully.\n";
+        } else {
+            echo "Failed to send WhatsApp notification.\n";
+        }
+    } else {
+        echo "WhatsApp credentials not configured. Skipping notification.\n";
+    }
     
     // Exit with code 1 to indicate change (can be used in CI/CD).
     exit(1);
