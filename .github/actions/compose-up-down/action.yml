@@ -1,0 +1,28 @@
+name: "Docker Compose: up (optional wait) then auto-down at job end"
+description: "Runs docker compose up --detach [--wait]; automatically runs docker compose down in post-job with matching args."
+runs:
+  using: "node24"
+  main: "dist/main.js"
+  post: "dist/post.js"
+
+inputs:
+  working-directory:
+    description: "Directory to run docker compose from (optional). If omitted, uses the step's working-directory."
+    required: false
+    default: ""
+  compose-file:
+    description: "One or more compose files (comma- or space-separated)."
+    required: false
+    default: ""
+  profiles:
+    description: "Compose profiles to enable (comma- or space-separated)."
+    required: false
+    default: ""
+  project-name:
+    description: "Compose project name (-p)."
+    required: false
+    default: ""
+  no-wait:
+    description: "Set to 'true' to disable --wait for 'up'."
+    required: false
+    default: "false"

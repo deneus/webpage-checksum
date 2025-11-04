@@ -1,0 +1,172 @@
+########################################################################################################################
+# Subtree split open source projects from Cable Car                                                                    #
+#                                                                                                                      #
+# Provides maintainers way to tag new versions of projects that are maintained as subtree splits within the Cable Car  #
+# repository.                                                                                                          #
+#                                                                                                                      #
+# As part of https://getopensocial.atlassian.net/browse/PROD-29945 we decided that anything that would depend on the   #
+# distribution, that's open source, would be put into the distribution. This ensures we only ever need to worry about  #
+# a version for a single project at a time.                                                                            #
+########################################################################################################################
+name: Subtree split open source projects
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        type: choice
+        description: |
+          Whether to tag a major, minor or patch version. Alternatively, push changes to the downstream repository 
+          without tagging a new version.
+        required: true
+        options:
+          - Push only
+          - Tag patch version
+          - Tag minor version
+          - Tag major version
+      project:
+        type: choice
+        description: Which project to create a new version for.
+        required: false
+        default: drupal/social
+        options:
+          - drupal/social
+          # Uncomment when the data_policy module is merged into Cable Car.
+          # - drupal/data_policy
+          # Uncomment when the graphql_oauth module is merged into Cable Car.
+          # - drupal/graphql_oauth
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  split:
+    name: Subtree Split
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Use a personal access token so that we can push to other repos.
+          token: ${{ secrets.GOALGORILLA_USER_CABLECAR_PAT }}
+          # We must fetch all history because subtree split needs to look at all commits to figure out what it needs to
+          # sync.
+          fetch-depth: '0'
+
+      - name: Subtree split
+        run: |
+          set -e 
+          if [[ "${{ inputs.project }}" == "drupal/social" ]]; then
+            PROJECT_REMOTE="https://github.com/goalgorilla/open_social.git"
+            PROJECT_PATH="applications/community_management_system/html/profiles/contrib/social"
+          # Uncomment when the data_policy module is merged into Cable Car.
+          # Ensure the PROJECT_REMOTE and PROJECT_PATH are correct.
+          # elif [[ "${{ inputs.project }}" == "drupal/data_policy" ]]; then
+          #   PROJECT_REMOTE="https://github.com/goalgorilla/data_policy.git"
+          #   PROJECT_PATH="applications/community_management_system/html/modules/open_source/data_policy"
+          # Uncomment when the graphql_oauth module is merged into Cable Car.
+          # Ensure the PROJECT_REMOTE and PROJECT_PATH are correct.
+          # elif [[ "${{ inputs.project }}" == "drupal/graphql_oauth" ]]; then
+          #   PROJECT_REMOTE="https://github.com/goalgorilla/graphql_oauth.git"
+          #   PROJECT_PATH="applications/community_management_system/html/modules/open_source/graphql_oauth"
+          else
+            echo "Error: The project '${{ inputs.project }}' was added to the workflow choices but has not been configured with a remote and path. Please update the workflow script to include the proper remote and path for this project."
+            exit 1
+          fi
+          
+          # Add the remote and fetch its history
+          git remote add split "${PROJECT_REMOTE}"
+          git fetch split
+          
+          # Split to a separate branch so that we have a branch we can tag on later.
+          
+          git subtree split --prefix="${PROJECT_PATH}" -b split-main
+          
+          # Provide some reporting for the workflow summary.
+          echo "## Commit hashes" >> $GITHUB_STEP_SUMMARY
+          echo "Previous HEAD of subtree split: $(git rev-parse --short --verify split/main)" >> $GITHUB_STEP_SUMMARY
+          echo "Pushing new HEAD of subtree split: $(git rev-parse --short --verify split-main)" >> $GITHUB_STEP_SUMMARY
+          
+          # Push the changes so that even if we don't tag our repo is updated.
+          git push split split-main:main
+          
+          # For the distribution, we must also sync to Drupal's GitLab to ensure the project page is updated.
+          # This is done using a force push. Any conflict detection happens when we push to our main 
+          # repository ($PROJECT_REMOTE), if someone accidentally merges something directly into GitLab then we want to
+          # overwrite this so our project stays in sync. 
+          if [[ "${{ inputs.project }}" == "drupal/social" ]]; then
+            # Set-up deploy key for Drupal.
+            mkdir -p ~/.ssh
+            echo "${{ secrets.DRUPAL_ORG_GITLAB_OPEN_SOCIAL_KEY }}" > ~/.ssh/id_drupal
+            chmod 600 ~/.ssh/id_drupal
+
+            # Make SSH use this key only for git.drupal.org
+            {
+                printf '%s\n' 'Host git.drupal.org'
+                printf '%s\n' '  HostName git.drupal.org'
+                printf '%s\n' '  IdentityFile ~/.ssh/id_drupal'
+                printf '%s\n' '  IdentitiesOnly yes'
+                printf '%s\n' '  StrictHostKeyChecking no'
+            } >> ~/.ssh/config
+            chmod 600 ~/.ssh/config
+
+            git remote add drupal "git@git.drupal.org:project/social.git"
+            git fetch drupal
+            git push --force drupal split-main:main
+          fi
+
+      - name: Tag new version
+        if: "${{ github.event.inputs.version_bump != 'Push only' }}"
+        run: |
+          set -e 
+          
+          # Get the latest tag from the remote that contains our project.
+          latest_tag=$(git ls-remote --tags --refs split | grep -o '[0-9]*\.[0-9]*\.[0-9]*$' | sort -V | tail -n1)
+          
+          if [ -z "$latest_tag" ]; then
+            echo "Expected to work on projects which already have at least one tag. However, no tags were found. This could indicate a bug in version detection, create the initial tag manually."
+            exit 1
+          fi
+          
+          # Extract version numbers.
+          major=$(echo "$latest_tag" | sed -E 's/([0-9]+)\.[0-9]+\.[0-9]+/\1/')
+          minor=$(echo "$latest_tag" | sed -E 's/[0-9]+\.([0-9]+)\.[0-9]+/\1/')
+          patch=$(echo "$latest_tag" | sed -E 's/[0-9]+\.[0-9]+\.([0-9]+)/\1/')
+          
+          # Figure out which new tag to made based on the user choice of version bump.
+          if [ "${{ inputs.version_bump }}" = "Tag major version" ]; then
+            new_tag="$((major + 1)).0.0"
+          elif [ "${{ inputs.version_bump }}" = "Tag minor version" ]; then
+            new_tag="${major}.$((minor + 1)).0"
+          elif [ "${{ inputs.version_bump }}" = "Tag patch version" ]; then
+            new_tag="${major}.${minor}.$((patch + 1))"
+          else
+            echo "Error: version_bump must be one of: 'Tag major version', 'Tag minor version', 'Tag patch version'"
+            echo "Received: ${{ inputs.version_bump }}"
+            exit 1
+          fi
+
+          echo "## Tag information" >> $GITHUB_STEP_SUMMARY
+          echo "Previous version: $latest_tag" | tee -a $GITHUB_STEP_SUMMARY
+          echo "New version: $new_tag" | tee -a $GITHUB_STEP_SUMMARY
+          
+          # Make sure we tag on the new split branch so that we don't include things from the parent repo.
+          git checkout split-main
+          git tag "$new_tag"
+          
+          # Push only the specific new tag to the project's remote.
+          if ! git push split "refs/tags/$new_tag"; then
+            echo "Failed to push tag $new_tag"
+            git tag -d "$new_tag"  # Clean up the local tag if push fails
+            exit 1
+          fi
+          
+          # For the distribution, we must also sync to Drupal's GitLab to ensure the project page is updated.
+          # This is done using a force push. Any conflict detection happens when we push to our main 
+          # repository ($PROJECT_REMOTE), if someone accidentally merges something directly into GitLab then we want to
+          # overwrite this so our project stays in sync.
+          if [[ "${{ inputs.project }}" == "drupal/social" ]]; then
+            git push --force drupal "refs/tags/$new_tag"
+          fi
+          
+          echo "Successfully created and pushed tag $new_tag"

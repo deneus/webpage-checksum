@@ -1,0 +1,214 @@
+name: Translations
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  extract:
+    name: Extract
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Install Gettext tools
+        run: sudo apt-get update && sudo apt-get install -y gettext && sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap, sqlite
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install patch command
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "devel@getopensocial.com"
+          git config --global user.name "Cablecar Translation Workflow"
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: composer install --prefer-dist --no-progress
+        working-directory: applications/community_management_system/
+
+      - name: Install Open Social Translation Extractor
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: composer install --prefer-dist --no-progress
+        working-directory: tools/oste
+
+      - name: Setup Extractor
+        run: |
+          mkdir -p ${RUNNER_TEMP}/extractor
+          ${GITHUB_WORKSPACE}/tools/oste/bin/setup-extractor.sh ${RUNNER_TEMP}/extractor
+
+      - name: Extract Extensions
+        working-directory: applications/community_management_system/html/modules/extensions
+        run: |
+          CHANGES_FILE="${RUNNER_TEMP}/EXTENSION_CHANGES.md"
+          touch $CHANGES_FILE
+
+          PROJECTS=`ls -d */`
+          while read -r p; do
+            # Extract the actual project name
+            NAME="$(basename $p)"
+            # Prepare some commonly used paths
+            TRANSLATIONS_FOLDER="${NAME}/translations"
+
+            ${GITHUB_WORKSPACE}/tools/oste/bin/extract-source.sh ${RUNNER_TEMP}/extractor $NAME $TRANSLATIONS_FOLDER || echo "Failed at $NAME"
+
+            echo "extraction completed, listing changes"
+            CHANGES=`${GITHUB_WORKSPACE}/tools/oste/bin/list-changes.sh -- "$TRANSLATIONS_FOLDER/en.pot"`
+            if [[ ! -z "$CHANGES" ]]; then
+              echo "### $NAME" >> $CHANGES_FILE
+              echo "\`\`\`diff" >> $CHANGES_FILE
+              echo "$CHANGES" >> $CHANGES_FILE
+              echo "\`\`\`" >> $CHANGES_FILE
+            fi
+          done <<< "$PROJECTS"
+
+          # Commit the changes for all extensions
+          ${GITHUB_WORKSPACE}/tools/oste/bin/commit-updated-po-files.sh --yes Extensions: Update translation source strings
+
+      - name: Extract Drupal Modules
+        working-directory: applications/community_management_system/html/modules/contrib
+        run: |
+          CHANGES_FILE="${RUNNER_TEMP}/CONTRIB_CHANGES.md"
+          touch $CHANGES_FILE
+
+          WORKING_DIR=`pwd`
+
+          PROJECTS=`ls -d */`
+          while read -r p; do
+            # Extract the actual project name
+            NAME="$(basename $p)"
+            # Prepare some commonly used paths
+            TRANSLATIONS_FOLDER="${GITHUB_WORKSPACE}/drupal_translations/contrib/${NAME}"
+
+            ${GITHUB_WORKSPACE}/tools/oste/bin/extract-source.sh ${RUNNER_TEMP}/extractor $NAME $TRANSLATIONS_FOLDER
+
+            # Move into folder with updated translations so `.gitattributes`
+            # will be properly applied.
+            cd $TRANSLATIONS_FOLDER
+            CHANGES=`${GITHUB_WORKSPACE}/tools/oste/bin/list-changes.sh en.pot`
+            if [[ ! -z "$CHANGES" ]]; then
+              echo "### $NAME" >> $CHANGES_FILE
+              echo "\`\`\`diff" >> $CHANGES_FILE
+              echo "$CHANGES" >> $CHANGES_FILE
+              echo "\`\`\`" >> $CHANGES_FILE
+            fi
+
+            # Move back so next extraction works properly.
+            cd $WORKING_DIR
+          done <<< "$PROJECTS"
+
+          # Move into the folder with updated files.
+          cd ${GITHUB_WORKSPACE}/drupal_translations/contrib
+
+          # Commit the changes for all modules
+          ${GITHUB_WORKSPACE}/tools/oste/bin/commit-updated-po-files.sh --yes Drupal modules: Update translation source strings
+
+      - name: Extract Drupal Core
+        working-directory: applications/community_management_system/html
+        run: |
+          CHANGES_FILE="${RUNNER_TEMP}/CORE_CHANGES.md"
+          touch $CHANGES_FILE
+
+          NAME="core"
+          TRANSLATIONS_FOLDER="${GITHUB_WORKSPACE}/drupal_translations/${NAME}"
+
+          ${GITHUB_WORKSPACE}/tools/oste/bin/extract-source.sh ${RUNNER_TEMP}/extractor $NAME $TRANSLATIONS_FOLDER
+
+          # Move into the folder with updated files.
+          cd ${GITHUB_WORKSPACE}/drupal_translations/core
+
+          CHANGES=`${GITHUB_WORKSPACE}/tools/oste/bin/list-changes.sh $TRANSLATIONS_FOLDER/en.pot`
+          if [[ ! -z "$CHANGES" ]]; then
+            echo "### $NAME" >> $CHANGES_FILE
+            echo "\`\`\`diff" >> $CHANGES_FILE
+            echo "$CHANGES" >> $CHANGES_FILE
+            echo "\`\`\`" >> $CHANGES_FILE
+          fi
+
+          # Commit the changes for drupal core
+          ${GITHUB_WORKSPACE}/tools/oste/bin/commit-updated-po-files.sh --yes Drupal core: Update translation source strings
+
+      - name: Collect Changes
+        id: changesets
+        run: |
+          EXTENSION_CHANGES="$(cat "${RUNNER_TEMP}/EXTENSION_CHANGES.md")"
+          CONTRIB_CHANGES="$(cat "${RUNNER_TEMP}/CONTRIB_CHANGES.md")"
+          CORE_CHANGES="$(cat "${RUNNER_TEMP}/CORE_CHANGES.md")"
+
+          if [[ ! -z "$EXTENSION_CHANGES" ]]; then
+          EXTENSIONS=$(cat <<EOF
+          ## Extensions
+          ${EXTENSION_CHANGES}
+          EOF
+          )
+          else
+          EXTENSIONS=$(cat <<EOF
+          ## Extensions
+          No changes
+          EOF
+          )
+          fi
+
+          if [[ ! -z "$CONTRIB_CHANGES" ]]; then
+          CONTRIB=$(cat <<EOF
+          ## Contrib Modules
+          ${CONTRIB_CHANGES}
+          EOF
+          )
+          else
+          CONTRIB=$(cat <<EOF
+          ## Contrib Modules
+          No changes
+          EOF
+          )
+          fi
+
+          if [[ ! -z "$CORE_CHANGES" ]]; then
+          CORE=$(cat <<EOF
+          ## Core Modules
+          ${CORE_CHANGES}
+          EOF
+          )
+          else
+          CORE=$(cat <<EOF
+          ## Core Modules
+          No changes
+          EOF
+          )
+          fi
+
+          PR_BODY=$(cat <<EOF
+          # Summary of Translations
+          Below is a summary of the strings changed, removed, and updated in the template file.
+
+          $EXTENSIONS
+          $CORE
+          $CONTRIB
+          EOF
+          )
+
+          echo "$PR_BODY" > "${RUNNER_TEMP}/CHANGES.md"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/translations-source-extraction
+          delete-branch: true
+          title: Updated source translations
+          body-path: ${{ runner.temp }}/CHANGES.md
+          labels: automated,translations

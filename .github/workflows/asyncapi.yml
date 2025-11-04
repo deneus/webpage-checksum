@@ -1,0 +1,93 @@
+name: AsyncAPI Documentation
+
+on:
+  pull_request:
+    types:
+      - closed
+      - opened
+      - reopened
+      - synchronize
+    paths:
+      # Matches any asyncapi.yml file in any directory.
+      - '**/asyncapi.yml'
+
+# Ensure we run all commands in `bash` by default. This ensures our scripts and steps have a predictable shell syntax
+# and capabilities.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  generate:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap
+          coverage: none
+          tools: cs2pr
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install patch command
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch
+
+      - name: Aggregate AsyncAPI definitions
+        working-directory: applications/community_management_system
+        run: composer asyncapi-aggregate
+
+      - name: Validate AsyncAPI document
+        uses: asyncapi/cli@v4.0.0
+        with:
+          command: validate
+          filepath: events/asyncapi.aggregated.yml
+
+      - name: Generate AsyncAPI documentation
+        uses: asyncapi/cli@v4.0.0
+        with:
+          command: generate
+          filepath: events/asyncapi.aggregated.yml
+          template: "@asyncapi/html-template@2.3.14"
+          output: events/docs
+
+      - name: Upload artifacts
+        id: artifact-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'asyncapi-docs'
+          path: |
+            events
+            !events/kafka-topics.txt
+
+      # On closing a pull request and merging it into main we want to update the changes to the AsyncAPI documentation repository.
+      - name: Checkout the AsyncAPI documentation repository
+        if: github.event.pull_request.merged == true
+        uses: actions/checkout@v5
+        with:
+          repository: goalgorilla/event-documentation
+          path: asyncapi-docs
+          token: ${{ secrets.GOALGORILLA_USER_CABLECAR_PAT }}
+
+      - name: Copy aggregated AsyncAPI file to `asyncapi-docs`
+        if: github.event.pull_request.merged == true
+        run: cp events/asyncapi.aggregated.yml asyncapi-docs/asyncapi.yml
+
+      - name: Copy generated documentation to `asyncapi-docs/public`
+        if: github.event.pull_request.merged == true
+        run: cp -rf events/docs/* asyncapi-docs/public
+
+      - name: Commit and push changes
+        if: github.event.pull_request.merged == true
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: Update AsyncAPI documentation (#${{ github.event.pull_request.number }})
+          repository: asyncapi-docs
+          branch: main

@@ -1,0 +1,135 @@
+name: Behat PHPDoc
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      # If the behat config changes we might add or remove a context.
+      - 'applications/community_management_system/tests/behat/behat.yml'
+      - 'applications/community_management_system/html/profiles/contrib/social/tests/behat/behat.yml'
+      # Contexts might be altered with steps added or removed.
+      - 'applications/community_management_system/tests/behat/features/bootstrap/**'
+      - 'applications/community_management_system/html/profiles/contrib/social/tests/behat/features/bootstrap/**'
+      # If the composer.lock file has changed then contexts from installed
+      # packages might have been updated.
+      - 'applications/community_management_system/composer.lock'
+
+# Ensure we run all commands in `bash` by default. This ensures our scripts and steps have a predictable shell syntax
+# and capabilities.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  generate:
+    name: Generate
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Install wget
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+
+      - name: Install yq
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && \
+            sudo chmod +x /usr/bin/yq
+
+      - name: Install phpDocumentor
+        run: |
+          sudo wget https://phpdoc.org/phpDocumentor.phar -O /usr/bin/phpdoc && \
+            sudo chmod +x /usr/bin/phpdoc
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap
+          coverage: none
+          tools: cs2pr
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install patch command
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch
+
+      - name: Checkout Cable Car code
+        uses: actions/checkout@v5
+        with:
+          path: cablecar
+
+      - name: Checkout the PHPDoc Repository
+        uses: actions/checkout@v5
+        with:
+          repository: goalgorilla/behat-step-docs
+          path: behat-docs
+          # Use a personal access token since we're pulling from another private repo.
+          token: ${{ secrets.GOALGORILLA_USER_CABLECAR_PAT }}
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        working-directory: cablecar/applications/community_management_system
+        run: composer install --prefer-dist --no-progress --dev
+
+      - name: Generate PHPDocs
+        env:
+          BEHAT_FILE: tests/behat/behat.yml
+          OUTPUT_DIR: ../../../behat-docs/public
+        working-directory: cablecar/applications/community_management_system
+        run: |
+          set -e
+          ###############################################################################
+          # Behat Steps                                                                 #
+          #                                                                             #
+          # Allows you to generate PHPDocs for the Contexts configured in a Behat.yml   #
+          # file.                                                                       #
+          #                                                                             #
+          # Usage: ./behat-steps <behat-file> <output-dir>                              #
+          #                                                                             #
+          # Must be run from the project root so that the autoload file is at           #
+          # `vendor/autoload.php`.                                                      #
+          # Must have phpDocumenter downloaded in the project root as `phpdoc`          #
+          # executable.                                                                 #
+          # See https://docs.phpdoc.org/3.0/guide/getting-started/installing.html       #
+          ###############################################################################
+
+          command -v yq >/dev/null 2>&1 || { echo >&2 "The yq utility is required. Install it with \`brew install yq\`. \nAborting."; exit 1; }
+
+          if [ ! -f "$BEHAT_FILE" ]; then
+            echo "Could not find behat file '$BEHAT_FILE'" 1>&2
+            exit 2
+          fi
+
+          if [ ! -w "$OUTPUT_DIR" ]; then
+            echo "Can not write to '$OUTPUT_DIR'" 1>&2
+            exit 3
+          fi
+
+          # This reads the contexts from the Behat configuration. The select exists
+          # because the context is a combination of an array with simple string
+          # values and complex mappings for arguments to the context.
+          yq '.default.suites.default.contexts[] | (select(. | tag == "!!map") | keys | .0, select(. | tag == "!!str"))' "$BEHAT_FILE" |
+            # We must escape the backslashes in snamespaces
+            sed 's/\\/\\\\/g' |
+            # Using some PHP magic find the file for each class
+            xargs -I {} php -r '$loader = require "./vendor/autoload.php"; $path = $loader->findFile("{}"); if (!$path) { echo "Could not find {}\n"; exit(1); } echo "\"" .  $path . "\"" . PHP_EOL;' |
+            # Replace the current working directory in the path, phpdoc paths need to be
+            # relative.
+            sed -e "s#$PWD/vendor/composer/\.\./\.\./##" |
+            sed -e "s#$PWD/vendor/composer/\.\./#vendor/#" |
+            # Prefix each line by the file flag to pass to phpdoc.
+            sed -e 's/^/\-f /' |
+            # Document the files with PHPDoc but limit to public methods.
+            # We generate a clean HTML template in the output folder.
+            xargs phpdoc run --visibility public --title "Cable Car Behat Contexts" -t "$OUTPUT_DIR"
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: Update Behat PHPDocs
+          repository: behat-docs

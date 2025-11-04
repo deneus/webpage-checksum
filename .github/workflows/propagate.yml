@@ -1,0 +1,103 @@
+name: "[CMS] Dependabot Composer Propagate"
+
+on:
+  workflow_run:
+    workflows: [QA]
+    types: [completed]
+    branches:
+      - dependabot/composer/**
+
+permissions:
+  actions: read
+  pull-requests: read
+  contents: write
+
+jobs:
+  check-propagate:
+    name: Check if propagation was the issue
+    runs-on: self-hosted
+
+    # Only run on dependabot composer PRs.
+    if: github.actor == 'dependabot[bot]' && github.event.workflow_run.conclusion == 'failure'
+
+    outputs:
+      should-run: ${{ steps.succeeded.outputs.result }}
+
+    steps:
+    - uses: actions/github-script@v8
+      id: succeeded
+      with:
+        result-encoding: string
+        script: |
+          const response = await github.rest.actions.listJobsForWorkflowRunAttempt({
+             owner: context.repo.owner,
+             repo: context.repo.repo,
+             run_id: context.payload.workflow_run.id,
+             attempt_number: context.payload.workflow_run.run_attempt,
+          });
+          const propagate = response.data.jobs.find( job => job.name === "Monorepo Propagated" );
+          if (typeof propagate === "undefined") {
+            console.log(response.data.jobs);
+            throw new Error("Could not find job with the name 'Monorepo Propagated'");
+          }
+
+          return propagate.conclusion === "failure" ? "run" : "";
+
+  composer:
+    name: Composer Update
+    needs: [check-propagate]
+    runs-on: self-hosted
+
+    if: needs.check-propagate.outputs.should-run == 'run'
+
+    steps:
+      # This should check out our `main` branch which has all the tools we need. For security reasons we must install
+      # from that branch because we know those dependencies have been vetted.
+      - uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap
+          coverage: none
+          tools: composer
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install patch command
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch
+
+      - name: Install tools
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: composer install
+        working-directory: applications/community_management_system
+
+      # Now we can check out the updated code, but we can not install any code from it; it should be treated as
+      # untrusted.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          # Don't remove the installed composer dependencies which contain our tooling.
+          clean: false
+          # Use a personal access token so that our push later triggers workflows.
+          token: ${{ secrets.GOALGORILLA_USER_CABLECAR_PAT }}
+
+      # We must use the direct vendor/executable here rather than going through the composer.json scripts fields because
+      # the composer.json might have been changed by a malicious actor impersonating dependabot.
+      - name: Update dependency to extensions
+        run: vendor/bin/monorepo-builder propagate --ansi
+        working-directory: applications/community_management_system
+
+      - name: Validate composer.json and composer.lock with our extensions
+        run: vendor/bin/monorepo-builder validate --ansi
+        working-directory: applications/community_management_system
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: Propagate dependabot update to extensions

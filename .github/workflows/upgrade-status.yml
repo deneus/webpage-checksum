@@ -1,0 +1,100 @@
+name: Drupal Upgrade Status
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every Monday at 2 AM, so we have an update report at the start of the week that we can process.
+    - cron: '0 2 * * 1'
+
+# Ensure we run all commands in `bash` by default. This ensures our scripts and steps have a predictable shell syntax
+# and capabilities.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-extension:
+    name: "Check Extensions"
+    runs-on: [self-hosted, normal]
+    container:
+      image: goalgorilla/open_social_docker:ci-drupal10-php8.3-v2
+      volumes:
+        - ${{ github.workspace }}/applications/community_management_system:/var/www
+
+    services:
+      db:
+        image: mariadb:10.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: social
+      mail:
+        image: axllent/mailpit
+        env:
+          VIRTUAL_HOST: mail.social.dev
+          VIRTUAL_PORT: 8025
+        ports:
+          - "8025"
+      redis:
+        image: redis:latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: /var/www
+
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@v5
+
+      - name: Install dependencies and Upgrade Helper
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: |
+          set -e
+
+          composer install
+
+          # We let composer select the newest compatible version since new versions might be released providing us with
+          # newer insights.
+          composer require --dev drupal/upgrade_status
+
+      - name: Install Open Social
+        run: |
+          set -e
+
+          cp html/profiles/contrib/social/tests/default.settings.php /var/www/html/sites/default/default.settings.php
+
+          # @todo Once it's possible, install with all optional modules so that the Update Status module has more info.
+          # Add `social_module_configure_form.select_all='TRUE'` before `install_configure_form`.
+          vendor/bin/drush site-install -y social --db-url=mysql://root:root@db:3306/social install_configure_form.update_status_module='array(FALSE,FALSE)' --site-name='Open Social';
+
+      # Until we can enable all optional extensions as part of the installation process we do so one by one.
+      - name: Enable all optional extensions one by one
+        run: |
+          set -e
+
+          EXTENSIONS=`find html/modules/extensions -name '*.installer_options.yml' | xargs -n1 -I{} basename {} .installer_options.yml`
+          for extension in $EXTENSIONS; do
+            vendor/bin/drush en -y $extension
+          done
+
+      - name: Enable Upgrade Status module
+        run: vendor/bin/drush en -y upgrade_status
+
+      # We can not use the built-in --ignore-contrib flag here because the Upgrade Status module uses the presence of a
+      # `project` key in the info.yml file to distinguish between custom modules and contrib modules from Drupal.org.
+      # However, all our extensions specify a project key, so it thinks all of our code are contrib modules.
+      # Because checking _all_ of the modules in Cablecar takes ages (and the contrib findings are not actionable for
+      # us) we must manually search for the modules that exist and request them from the update helper.
+      - name: Generate Upgrade Status Report
+        # Upgrade Status expects _project_ names as argument not modules. All our Cablecar projects are in the
+        # extensions folder, so we convert those paths to a list of project names and pass them to the checkstyle
+        # command as a space separated list of arguments.
+        run: ls html/modules/extensions | xargs -n1 basename | xargs vendor/bin/drush upgrade_status:checkstyle | tee upgrade_status.xml
+
+      - name: Publish Checkstyle report
+        uses: Juuxel/publish-checkstyle-report@v2
+        if: ${{ failure() || success() }}
+        with:
+          reports: |
+            upgrade_status.xml

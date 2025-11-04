@@ -1,0 +1,1339 @@
+########################################################################################################################
+# Quality Assurance workflow                                                                                           #
+#                                                                                                                      #
+# This file contains the entire quality assurance workflow for the Open Social product. This includes code health      #
+# checks for coding standards and static analysis; mono repository management and running of our test suite.           #
+#                                                                                                                      #
+# All these checks exist in a single workflow so that cheap checks with a high-frequency of change can be prioritized  #
+# over expensive low-frequency of change checks (i.e. we want code to be up to standards before we check if it works   #
+# functionally).                                                                                                       #
+#                                                                                                                      #
+# This workflow makes use of *-gate jobs. These allow parts of the workflow to be segmented off from other parts of    #
+# the workflow. For example, the Behat jobs are many and expensive so they do not run if there were any quality issues #
+# in the PR which means we know there'll be another push that would restart the CI jobs again. Additionally the gates  #
+# provide secure targets for GitHub Rulesets. Jobs that are a result of a dynamic matrix (e.g. versioned checks or     #
+# jobs that run based on discovery) are difficult to add to these Rulesets. Additionally, these Rulesets ignore jobs   #
+# that haven't run. For auto-merging purposes, these jobs that haven't run are considered success. To work around both #
+# these issues the gates provide stable reference targets for the Rulesets that always run and mirror the status of    #
+# the jobs they `need` and aggregate.                                                                                  #
+#                                                                                                                      #
+# The *-status-aggregate jobs in front of the *-gate jobs work around the fact that GitHub does not have a way to run  #
+# a job always unless all previous steps have been skipped. By running this always and always exiting it successfully  #
+# we can create the logic so the Gate is ignored (and thus not a blocker for merging) if all previous jobs have        #
+# skipped. The expectation is that this only happens in case none of the jobs applied, otherwise there should be a     #
+# failing step with a failing gate somewhere.                                                                          #
+########################################################################################################################
+name: "[CMS] QA"
+
+# We want to ensure that new code introduced through PRs does not lower the quality of our project so we provide
+# developers with feedback in every pull request. Additionally, we want to ensure the quality of the product after
+# changes are merged, since this may differ slightly from a PR state, so we test on our main branch.
+# We don't run for changes to translation files since that's an automated process which does not actually affect any
+# code that is covered by this workflow.
+on:
+  pull_request:
+    # We deviate from the default (opened, synchronize, reopened) because we skip steps for draft PRs that need to be
+    # triggered when the PR is ready for review.
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - '.github/workflows/qualitychecks.yml'
+      - 'applications/community_management_system/**'
+      - '!applications/community_management_system/html/modules/extensions/**/translations/**'
+      - '!applications/community_management_system/html/modules/open_source/**/translations/**'
+      - '!applications/community_management_system/html/modules/projects/**/**/translations/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/qualitychecks.yml'
+      - 'applications/community_management_system/**'
+      - '!applications/community_management_system/html/modules/extensions/**/translations/**'
+      - '!applications/community_management_system/html/modules/open_source/**/translations/**'
+      - '!applications/community_management_system/html/modules/projects/**/**/translations/**'
+
+# We use the default concurrency grouping of allowing a single workflow per branch/PR/tag to run at the same time.
+# In case of PRs we only care about the results for the last workflow run, so we cancel workflows already in progress
+# when new code is pushed, in all other cases (branches/tags) we want to have a history for commits so it's easier to
+# find breakages when they occur (head_ref is non-empty only when the workflow is triggered from a PR).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.head_ref != '' }}
+
+env:
+  ###############################################################################
+  # GitHub workflow environment variables                                       #
+  #                                                                             #
+  # github.head_ref is only set when the workflow was triggered by a            #
+  # pull_request and it contains the value of the source branch of the PR.      #
+  # github.ref_name will than only be used if the workflow was not triggered by #
+  # a pull_request and it also just contains the branch name.                   #
+  ###############################################################################
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  DOCKER_COMPOSE_VERSION: 2.39.2
+
+# Ensure we run all commands in `bash` by default. This ensures our scripts and steps have a predictable shell syntax
+# and capabilities.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ######################################################################################################################
+  # Section - Coding Standards                                                                                         #
+  #                                                                                                                    #
+  # Ensures the code follows the standards we agreed upon and helps guard against deprecations and other antipatterns. #
+  ######################################################################################################################
+  phpstan:
+    name: PHPStan
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: PHP Stan
+        run: docker compose run --no-deps --rm cli phpstan analyse -c phpstan.neon
+        working-directory: applications/community_management_system
+
+  phpcs:
+    name: PHPCS
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: PHPCS
+        run: docker compose run --no-deps --rm cli phpcs --report=checkstyle > checkstyle.xml
+        working-directory: applications/community_management_system
+      - uses: staabm/annotate-pull-request-from-checkstyle-action@v1
+        with:
+          files: applications/community_management_system/checkstyle.xml
+
+  spellcheck:
+    name: Spell Check
+    runs-on: [self-hosted, normal]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: streetsidesoftware/cspell-action@v7
+
+  behat-linting:
+    name: Behat Linting
+    runs-on: [self-hosted, normal]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # PHP is still needed for the cucumber linter because the cucumber linter will output GitHub interpretable status
+      # reports. However, if the cucumber linter is run inside of Docker then the paths will be relative to the CMS
+      # application, whereas GitHub expects this to be relative to the repository root.
+      # https://github.com/shivammathur/setup-php
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap, pdo_sqlite
+          coverage: none
+          tools: cs2pr
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install patch command
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patch
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress
+        working-directory: applications/community_management_system
+
+      - name: Find changed test files
+        working-directory: applications/community_management_system
+        run: |
+          git fetch origin $BRANCH_NAME
+          # We change the way we create the TEST_FILES env in the GITHUB_ENV file depending on whether we actually have
+          # test files that were changed in this PR. This is needed to avoid the TEST_FILES variable from containing a
+          # single blank line in case no files are changed.
+          # The application prefix contains underscores and is thus stripped from the filename. Currently all paths to
+          # tests have no underscores. If Behat files were moved to packages then we might need to rethink discovery.
+          TEST_FILES=`git diff --name-only --diff-filter=d origin/$BRANCH_NAME..HEAD -- '**/*.feature' | sed 's/applications\/community_management_system\///'`
+          if [ "$TEST_FILES" == '' ]; then
+            echo 'TEST_FILES=' >> $GITHUB_ENV
+          else
+            {
+              echo 'TEST_FILES<<EOF'
+              echo "$TEST_FILES"
+              echo EOF
+            } >> "$GITHUB_ENV"
+          fi
+        env:
+          BRANCH_NAME: ${{ github.base_ref || github.ref_name }}
+
+      - name: Ensure behat folder and filenames are kebab-case
+        if: ${{ env.TEST_FILES != '' }}
+        working-directory: applications/community_management_system
+        run: |
+          # We must invert the exit code because we want to have no matches, but grep treats no matches as failure.
+          ! MISNAMED_FILES=`grep -v -E '^([a-z\-]+\/)+[a-z0-9\-]+\.feature$' <<<"$TEST_FILES"`
+          EXIT_CODE=$?
+          while read -r file && [ ! -z "$file" ]; do
+            echo "::error file=applications/community_management_system/$file::File and folder names for Behat tests must be kebab-case and alphanumeric."
+          done <<< "$MISNAMED_FILES"
+          exit $EXIT_CODE
+
+      - name: Lint modified test files
+        if:  ${{ env.TEST_FILES != '' }}
+        # printf is used to prepend the application path so that the output that the linting tool provides works and can
+        # be annotated within the PR.
+        run: xargs printf -- 'applications/community_management_system/%s\n' <<<"$TEST_FILES" | xargs applications/community_management_system/vendor/bin/cucumber-linter
+
+  # Blocks always depend on a theme, but a theme won't be available during module
+  # installation if the module is installed during site-install. This means
+  # site-install fails if a block is in config/install. A good rule of thumb is
+  # that blocks are always optional (you don't need them without a UI, i.e.
+  # theme) so they should always be in config/optional.
+  blocks-in-config-install:
+    name: No blocks in config/install
+    runs-on: [self-hosted, normal]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # We're only interested in blocks in config/install being added.
+      # grep exits with 0 if it has matches, which we consider to be a fail
+      # so we invert.
+      - run: "! git diff ${{ github.event.pull_request.base.sha }} ${{ github.sha }} -- '**/config/install/block.block.*.yml' | grep -e '^+'"
+        working-directory: applications/community_management_system
+
+  # Contrary to the other jobs we only perform this check on pull requests and
+  # accept that if a PR is merged despite this check we can ignore the addition
+  # on the main branch.
+  # We also don't stop testing entirely if this fails (continue-on-error) since a reviewer may decide a config override
+  # is acceptable.
+  config-overrides:
+    if: github.event_name != 'push'
+    name: No config overrides added
+    runs-on: [self-hosted, normal]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # We're only interested in config overrides being added.
+      # grep exits with 0 if it has matches, which we consider to be a fail
+      # so we invert.
+      - run: "! git diff ${{ github.event.pull_request.base.sha }} ${{ github.sha }} -- '**/*.services.yml' | grep -e '^+' | grep config.factory.override"
+        working-directory: applications/community_management_system
+
+  ######################################################################################################################
+  # Section - Monorepo maintenance                                                                                     #
+  #                                                                                                                    #
+  # Ensures that local changes have successfully updated all our monorepo files. This is needed to make sure we don't  #
+  # run different versions of the same package for our different extensions. Also performs some validations for how we #
+  # use patches across our project.                                                                                    #
+  ######################################################################################################################
+  monorepo-validate:
+    name: Monorepo Validation
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: Check composer.json validity
+        run: docker compose run --no-deps --rm cli composer validate-monorepo
+        working-directory: applications/community_management_system
+
+  monorepo-merge:
+    name: Monorepo Merge
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: Update root composer.json
+        run: docker compose run --no-deps --rm cli composer merge-to-root
+        working-directory: applications/community_management_system
+
+      - name: Assert clean repository
+        run: git diff --exit-code
+        working-directory: applications/community_management_system
+
+  monorepo-propagate:
+    name: Monorepo Propagated
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: Update root composer.json
+        run: docker compose run --no-deps --rm cli composer propagate-to-extensions
+        working-directory: applications/community_management_system
+
+      - name: Assert clean repository
+        run: git diff --exit-code
+        working-directory: applications/community_management_system
+
+  monorepo-validate-patches:
+    name: Validate Patches
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: Validate Patches
+        run: docker compose run --no-deps --rm cli composer validate-patches
+        working-directory: applications/community_management_system
+
+  no-conflicting-patches:
+    name: No Conflicting Patches
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Check that no one used different versions of the same patch
+        # This loops over the objects in `.extra.patches` which is an object
+        # keyed by patchable module with a value of an object that has a key for
+        # a patch description and a value of a patch string. The jq expression
+        # filters out any of these deepest values that are arrays and then
+        # asserts that this collection is empty for every module. If this is not
+        # the case then `jq` will exit with 1 (`-e`) and fail our job. This
+        # tells us that a `merge-to-root` caused multiple versions of the same
+        # patch to be used across modules.
+        run: jq -e '.extra.patches | map(values) | map_values(map_values(arrays)) | all(length == 0)' composer.json
+        working-directory: applications/community_management_system
+
+  monorepo-validate-packages:
+    name: Packages contain exactly one composer.json file
+    runs-on: [self-hosted, normal]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - run: scripts/monorepoPackageValidator.sh
+        working-directory: applications/community_management_system
+
+  ######################################################################################################################
+  # Section - Quality Gate                                                                                             #
+  #                                                                                                                    #
+  # Provides a single target for test runs below to know that the code and monorepo are in the right condition. This   #
+  # works around an issue that `if` overwrites `needs`, so this makes the if-statements later in our file simpler.     #
+  ######################################################################################################################
+  quality-result-aggregator:
+    name: Quality Result
+    runs-on: self-hosted
+    if: ${{ always() }}
+    needs:
+      - phpstan
+      - phpcs
+      - spellcheck
+      - behat-linting
+      - blocks-in-config-install
+      - monorepo-validate
+      - monorepo-merge
+      - monorepo-propagate
+      - monorepo-validate-patches
+      - no-conflicting-patches
+      - monorepo-validate-packages
+    outputs:
+      result: ${{ steps.aggregate.outputs.result }}
+    steps:
+      - id: aggregate
+        run: |
+          set -e
+          # Anything failed or was cancelled means our gate shouldn't pass.
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          # If nothing failed, nothing was cancelled and nothing succeeded, then all dependents were skipped.
+          elif [ "${{ !contains(needs.*.result, 'success') }}" == "true" ]; then
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+          # All the checks that applied were successful, so we succeeded.
+          else
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          fi
+
+  quality-gate:
+    name: Quality Gate
+    runs-on: self-hosted
+    needs:
+      - quality-result-aggregator
+    if: ${{ !cancelled() && needs.quality-result-aggregator.outputs.result != 'skipped' }}
+    steps:
+      - name: One or more jobs have failed.
+        if: ${{ needs.quality-result-aggregator.outputs.result == 'failed' }}
+        run: exit 1
+      - name: All quality checks passed
+        if: ${{ needs.quality-result-aggregator.outputs.result == 'success' }}
+        run: exit 0
+
+  ######################################################################################################################
+  # Section - PHPUnit Tests                                                                                            #
+  #                                                                                                                    #
+  # PHPUnit tests are used when there is no UI we want to check and when we're testing systems that can be easily      #
+  # isolated for testing. An example is our GraphQL API.                                                               #
+  #                                                                                                                    #
+  # It only runs when the quality-gate has passed, and we're not in a pull request, or the pull request is out of      #
+  # draft status.                                                                                                      #
+  ######################################################################################################################
+  phpunit:
+    if: needs.quality-gate.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: ['quality-gate']
+    name: PHPUnit Tests
+    runs-on: [self-hosted, normal]
+    strategy:
+      matrix:
+        testsuite:
+          - phpstan
+          - extensions-unit-modules
+          - extensions-unit-submodules
+          - extensions-kernel-modules
+          - extensions-kernel-submodules
+          - concepts
+          - projects-unit-modules
+          - projects-unit-submodules
+          - projects-kernel-modules
+          - projects-kernel-submodules
+          - open_source-unit-modules
+          - open_source-unit-submodules
+          - open_source-kernel-modules
+          - open_source-kernel-submodules
+          - install-profile-unit-module
+          - install-profile-unit-submodule
+          - install-profile-kernel-module
+          - install-profile-kernel-submodule
+          - projects-iata-airline-kernel
+          - projects-iata-capture-kernel
+          - projects-iata-ghsp-kernel
+          - projects-iata-graphql-user-kernel
+          - projects-iata-registry-kernel
+          - projects-iata-role-kernel
+          - projects-social-power-bi-kernel
+          - projects-iata-others-kernel
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        run: docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install --prefer-dist --no-progress --dev
+        working-directory: applications/community_management_system
+
+      - name: Run PHPUnit tests for suite ${{ matrix.testsuite }}
+        run: |
+          docker compose run --no-deps --rm --env SIMPLETEST_DB cli phpunit \
+          --testsuite ${{ matrix.testsuite }} \
+          --log-junit test-reports/phpunit-${{ matrix.testsuite }}.xml \
+          --dont-report-useless-tests
+        env:
+          SIMPLETEST_DB: sqlite://tmp/db.sqlite
+        working-directory: applications/community_management_system
+
+  phpunit-result-aggregator:
+    name: PHPUnit Result
+    runs-on: self-hosted
+    if: ${{ always() }}
+    needs:
+      - phpunit
+    outputs:
+      result: ${{ steps.aggregate.outputs.result }}
+    steps:
+      - id: aggregate
+        run: |
+          set -e
+          # Anything failed or was cancelled means our gate shouldn't pass.
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          # If nothing failed, nothing was cancelled and nothing succeeded, then all dependents were skipped.
+          elif [ "${{ !contains(needs.*.result, 'success') }}" == "true" ]; then
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+          # All the checks that applied were successful, so we succeeded.
+          else
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          fi
+
+  phpunit-gate:
+    name: PHPUnit Gate
+    runs-on: self-hosted
+    needs:
+      - phpunit-result-aggregator
+    if: ${{ !cancelled() && needs.phpunit-result-aggregator.outputs.result != 'skipped' }}
+    steps:
+      - name: PHPUnit test(s) failed or were cancelled
+        if: ${{ needs.phpunit-result-aggregator.outputs.result == 'failed' }}
+        run: exit 1
+      - name: All PHPUnit tests succeeded
+        if: ${{ needs.phpunit-result-aggregator.outputs.result == 'success' }}
+        run: exit 0
+
+  ######################################################################################################################
+  # Section - Behat Tests                                                                                              #
+  #                                                                                                                    #
+  # Behat is used for our integration tests. This is the largest part of our test suite since a lot of Open Social's   #
+  # functionality comes from correctly configuring Drupal and contributed modules.                                     #
+  #                                                                                                                    #
+  # It only runs when the quality-gate has passed, and we're not in a pull request, or the pull request is out of      #
+  # draft status.                                                                                                      #
+  ######################################################################################################################
+  behat_feature_discovery:
+    if: needs.quality-gate.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    needs: ['quality-gate']
+    name: "Behat Feature Discovery"
+    runs-on: [self-hosted, normal]
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: sudo apt-get install jq
+
+      - name: Find feature files
+        id: set-matrix
+        run: |
+          echo -n "features=" >> $GITHUB_OUTPUT
+          # Looks for tests in the supported locations but abbreviates those locations to `cms` and `install-profile`
+          # before transforming to JSON output for GitHub matrix consumption.
+          find {tests/behat/features/capabilities,html/profiles/contrib/social/tests/behat/features/capabilities} -type d -exec sh -c "ls {} | grep '\.feature$' > /dev/null" ';' -print | sed 's/html\/profiles\/contrib\/social\/tests\/behat\/features\/capabilities/install-profile/g' | sed 's/tests\/behat\/features\/capabilities/cms/g' | jq -R -s -c 'split("\n") | map(select(length > 0))' >> $GITHUB_OUTPUT
+        working-directory: applications/community_management_system
+    outputs:
+      features: ${{ steps.set-matrix.outputs.features }}
+
+  behat_install_open_social:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: "Behat Install Open Social"
+    runs-on: [self-hosted, normal]
+    strategy:
+      matrix:
+        update:
+          - ""
+          - "update"
+        with_optional:
+          - ""
+        # @todo This doesn't work yet due to a bug in social_geolocation_maps
+        #  - "with-optional"
+
+    steps:
+      - name: Checkout branch under test
+        uses: actions/checkout@v5
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Cache Composer cache directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.cache/composer
+          # A static cache key is used because the contents of the composer cache itself does not depend on the
+          # `composer.lock` file (i.e. if only 1 file is updated there can still be a 99% hitrate) and it's generally
+          # expected that composer keeps its own cache clean. If it grows out of proportion we can figure out a cleaning
+          # strategy.
+          key: composer-cache-dir
+
+      - if: matrix.update == 'update'
+        name: Find last release version
+        run: |
+          set -e
+          # We must download all the tags manually because `actions/checkout`
+          # will only download tags within the depth it's downloading. However
+          # the last tag may be only a few, or hundreds of commits behind.
+          # Experimentation showed that doing this without a specific branch
+          # downloaded the fewest things.
+          git fetch --depth=1 --tags
+          # We don't use the `git describe ..` that's commonly documented across
+          # the web because we only have tags on grafted commits, and not on a
+          # continuous branch. We instead use git's built-in sorting of tags by
+          # version, which our year.minor.patch format adheres to.
+          echo "LAST_RELEASE=$(git tag --sort=v:refname | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$' | tail -n1)" >> "$GITHUB_ENV"
+
+      - if: matrix.update == 'update'
+        name: Checkout last release of Cablecar
+        run: git checkout ${{ env.LAST_RELEASE }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - if: matrix.update == 'update'
+        name: Pull docker images for last release of Cablecar
+        working-directory: applications/community_management_system
+        run: docker compose --profile=cli pull && docker compose --profile=cli build --pull
+
+      - if: matrix.update == 'update'
+        name: Start Docker containers for previous version
+        working-directory: applications/community_management_system
+        # This calls `docker compose up` manually rather than using our custom action because we later stop the
+        # container again manually to switch to our newer version.
+        run: docker compose up --detach --wait
+
+      - if: matrix.update == 'update'
+        name: Install dependencies for previous major version of Cablecar
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+           docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install
+
+      - if: matrix.update == 'update'
+        name: Install Community Management System for previous major version of Cablecar
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          # Installation
+          # This is purposefully duplicated because we may change how
+          # installation works between major versions, so this provides us the
+          # flexibility to reflect that in the workflow.
+          docker compose run --no-deps --rm cli cp html/profiles/contrib/social/tests/default.settings.php html/sites/default/default.settings.php
+
+          export OPTIONAL=""
+          if [[ "${{ matrix.with_optional }}" == "with-optional" ]]; then
+            export OPTIONAL="social_module_configure_form.select_all='TRUE'"
+          fi
+
+          docker compose run --no-deps --rm cli drush site-install -y social --db-url=mysql://root:root@db:3306/social $OPTIONAL install_configure_form.enable_update_status_module=NULL install_configure_form.enable_update_status_emails=NULL  --site-name='Open Social';
+
+          # Create swiftmailer-spool directory for behat tests
+          if [[ ! -d html/profiles/contrib/social/tests/behat/features/swiftmailer-spool ]]; then
+            docker compose run --no-deps --rm cli mkdir /var/www/html/profiles/contrib/social/tests/behat/features/swiftmailer-spool
+          fi
+
+          # Make sure swiftmailer is configured for our CI.
+          docker compose run --no-deps --rm cli drush cset -y swiftmailer.transport transport 'smtp'
+          docker compose run --no-deps --rm cli drush cset -y swiftmailer.transport smtp_host 'mail'
+          docker compose run --no-deps --rm cli drush cset -y swiftmailer.transport smtp_port 1025
+
+          # Dump the database to our test-output folder so that we can locally
+          # debug if the update fails.
+          mkdir -p behat-test-output
+          if [[ "${{ matrix.with_optional }}" == "with-optional" ]]; then
+            docker compose run --no-deps --rm cli drush sql-dump > behat-test-output/pre-update-with-optional.sql
+          else
+            docker compose run --no-deps --rm cli drush sql-dump > behat-test-output/pre-update.sql
+          fi
+
+      - if: matrix.update == 'update'
+        name: Stop Docker containers for previous version
+        working-directory: applications/community_management_system
+        run: docker compose stop
+
+      - if: matrix.update == 'update'
+        name: Forward to branch under test
+        run: git checkout $GITHUB_SHA
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull docker images for last branch under test
+        working-directory: applications/community_management_system
+        run: docker compose --profile=cli pull && docker compose --profile=cli build --pull
+
+      - name: Start Docker containers for branch under test
+        uses: ./.github/actions/compose-up-down
+        with:
+          working-directory: applications/community_management_system
+
+      - name: Install dependencies for branch under test
+        env:
+          COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          # https://github.com/simplesamlphp/simplesamlphp/issues/1853
+          # Updating directly from an older version gives Unable to install
+          # module simplesamlphp/simplesamlphp-assets-base,
+          # package name must be on the form "VENDOR/simplesamlphp-module-MODULENAME".
+          # We should either move to an in between version (but we don't have a CableCar version with that)
+          # or remove vendor so composer accepts it again.
+          docker compose run --no-deps --rm cli rm -rf vendor/
+
+           docker compose run --no-deps --rm -v ${{ runner.temp }}/.cache/composer:/root/.cache/composer --env COMPOSER_AUTH cli composer install
+
+      - if: matrix.update == 'update'
+        name: Update Community Management System for branch under test
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          docker compose run --no-deps --rm cli drush updb -y 2> >(tee update.log >&2)
+
+          # Make sure symfony_mailer is configured for our CI.
+          # Set config after updates when the config exist.
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail plugin 'smtp' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.user '' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.pass '' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.host 'mail' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.port '1025' -y
+
+          # Ensure there are no warnings in the update.log
+          if grep -E '^>\s+\[warning\]\s' update.log 1>/dev/null; then
+            mkdir -p behat-test-output
+
+            # Move the update.log with warnings and status messages to the test output. The text is viewable on GitHub
+            # too but some people might find it easier to just download the artifact and get digging.
+            if [[ "${{ matrix.with_optional }}" == "with-optional" ]]; then
+              mv update.log behat-test-output/update-with-optional.log
+            else
+              mv update.log behat-test-output/update.log
+            fi
+
+            # Abort our testing until the warning is fixed and let our user know why we stopped.
+            echo "The drush output should not contain any warnings"
+            exit 1
+          fi
+
+      - if: matrix.update == ''
+        name: Install Community Management System for branch under test
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          # Installation
+          # This is purposefully duplicated because we may change how
+          # installation works between major versions, so this provides us the
+          # flexibility to reflect that in the workflow.
+          docker compose run --no-deps --rm cli cp html/profiles/contrib/social/tests/default.settings.php html/sites/default/default.settings.php
+
+          export OPTIONAL=""
+          if [[ "${{ matrix.with_optional }}" == "with-optional" ]]; then
+          export OPTIONAL="social_module_configure_form.select_all='TRUE'"
+          fi
+
+          docker compose run --no-deps --rm cli drush site-install -y social --db-url=mysql://root:root@db:3306/social $OPTIONAL install_configure_form.enable_update_status_module=NULL install_configure_form.enable_update_status_emails=NULL  --site-name='Open Social';
+
+          # Create swiftmailer-spool directory for behat tests
+          if [[ ! -d html/profiles/contrib/social/tests/behat/features/swiftmailer-spool ]]; then
+            docker compose run --no-deps --rm cli mkdir /var/www/html/profiles/contrib/social/tests/behat/features/swiftmailer-spool
+          fi
+          docker compose run --no-deps --rm cli chown -R www-data:www-data /var/www/html/profiles/contrib/social/tests/behat/features/swiftmailer-spool
+          docker compose run --no-deps --rm cli chmod +w -R /var/www/html/profiles/contrib/social/tests/behat/features/swiftmailer-spool
+
+          # Make sure symfony_mailer is configured for our CI.
+          # Set config after updates when the config exist.
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail plugin 'smtp' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.user '' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.pass '' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.host 'mail' -y
+          docker compose run --no-deps --rm cli drush cset symfony_mailer.mailer_transport.sendmail configuration.port '1025' -y
+
+      - name: Dump Database
+        working-directory: applications/community_management_system
+        run: docker compose run --no-deps --rm cli drush sql:dump --result-file=../installation.sql
+
+      - name: Remove folders reducing package size
+        run: rm -rf .git drupal_translations tools
+
+      - name: Package up site
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}
+          key: ${{ github.run_id }}-test-setup-${{ matrix.update }}-${{ matrix.with_optional }}-${{ github.run_attempt }}
+
+      - name: Output docker logs
+        if: always()
+        working-directory: applications/community_management_system
+        run: docker compose logs
+
+      - name: Upload Behat Test Output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-install-${{ matrix.update }}-${{ matrix.with_optional }}
+          path: behat-test-output
+
+      - name: Upload install database
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-database-${{ matrix.update }}-${{ matrix.with_optional }}
+          path: applications/community_management_system/installation.sql
+          if-no-files-found: 'error'
+
+  # Until we overhaul Behat testing to work against a containerized version and can change how we parallelize tests
+  # (parallelizing within a Job rather than across jobs), we have to keep this in sync with the `behat-update` job.
+  # We avoid simplifying away from the `update` matrix because it makes spotting differences more difficult.
+  behat:
+    needs: [behat_feature_discovery, behat_install_open_social]
+
+    name: 'Behat Tests'
+    runs-on: [self-hosted, normal]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: ${{ fromJson(needs.behat_feature_discovery.outputs.features) }}
+        # This is a single value on purpose so it's configurable, due to GitHub limitations the `update` is tested in a
+        # separate job.
+        update:
+          - ""
+        with_optional:
+          - ""
+        # @todo This doesn't work yet due to a bug in social_geolocation_maps
+        #  - "with-optional"
+
+    steps:
+      - name: Download Site
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}
+          key: ${{ github.run_id }}-test-setup-${{ matrix.update }}-${{ matrix.with_optional }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+          # In case we're re-running a failed test then it's also okay to re-use
+          # a stored site from a previous run-attempt's install job.
+          restore-keys: |
+            ${{ github.run_id }}-test-setup-${{ matrix.update }}-${{ matrix.with_optional }}-
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Start product containers
+        uses: ./.github/actions/compose-up-down
+        with:
+          working-directory: applications/community_management_system
+
+        # This is needed until the correct UID/GID is set within the container.
+      - run: docker compose run --no-deps --rm cli chown -R www-data:www-data .
+        working-directory: applications/community_management_system
+
+      # We could run all tests at once by passing the folder directly to behat
+      # however, by doing this manually in a loop we have the ability to ensure
+      # each test runs against a clean database cheaply.
+      - name: Run Integration test
+        working-directory: applications/community_management_system
+        run: |
+          export TEST_DATABASE=/var/www/installation.sql
+          docker compose run --no-deps --rm cli behat --version
+
+          TEST_PATH="$(echo "${{ matrix.feature }}" | sed 's/install-profile/html\/profiles\/contrib\/social\/tests\/behat\/features\/capabilities/g' | sed 's/cms/tests\/behat\/features\/capabilities/g')"
+          for test in $TEST_PATH/*.feature; do
+            if head -n1 $test | grep -q "@disabled"; then
+              echo "$test - Skipping disabled test"
+              continue
+            fi
+
+            # If we're testing a clean install (i.e. not updating) then ignore
+            # any tests that have opted out of install testing.
+            if [[ -z "${{ matrix.update }}" ]]; then
+              export TAGS="--tags=~no-install"
+            # Do the same when we are testing with an update.
+            else
+              export TAGS="--tags=~no-update"
+            fi
+
+            # Tests with the @no-database tag import their own scaffold so they
+            # ignore the databases provided by our test matrix, that's why we
+            # only run them once when all our matrix values are off.
+            if [[ ! -z "${{ matrix.update }}" ]] || [[ ! -z "${{ matrix.with_optional }}" ]]; then
+              export TAGS="$TAGS&&~no-database"
+            fi
+
+            echo "::group::$test"
+            # Run in subshell to make the test command visible and copyable.
+            (set -x; docker compose run --no-deps --rm --env TEST_DATABASE cli behat -vv --config tests/behat/behat.yml --colors --allow-no-tests $TAGS $test)
+            echo "::endgroup::"
+          done
+
+      - name: Move test artifacts into upload folder
+        id: artifact-name
+        if: failure()
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          JOB_NAME="$(echo "${{ matrix.feature }}" | sed 's/\//--/g')"
+
+          # Generate the artifact name
+          if [[ ! -z "${{ matrix.update }}" ]] && [[ ! -z "${{ matrix.with_optional }}" ]]; then
+            echo "name=failed-test--update-with-optional--$JOB_NAME" >> $GITHUB_OUTPUT
+          elif [[ ! -z "${{ matrix.update }}" ]]; then
+            echo "name=failed-test--update--$JOB_NAME" >> $GITHUB_OUTPUT
+          elif [[ ! -z "${{ matrix.with_optional }}" ]]; then
+            echo "name=failed-test--with-optional--$JOB_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "name=failed-test--$JOB_NAME" >> $GITHUB_OUTPUT
+          fi
+
+          # Fix the owner of the files since they're now owned by the Docker container user but we really need them to
+          # be owned by the runner so we can create and move files and upload them with github actions.
+          # This has to be done until the UID/GID of the container match our runner.
+          sudo chown runner:runner .
+          sudo chown -R runner:runner tests/behat/logs
+
+          mkdir -p behat-test-output
+
+          # Move test results to the output folder if they exist
+          if (shopt -s nullglob; f=(tests/behat/logs/*); ((${#f[@]}))); then
+            # This runs with sudo until the UID of the GitHub worker runner and the UID/GID of www-data within the
+            # container are the same. See also the `sudo chown` down below.
+            sudo mv tests/behat/logs/* behat-test-output/
+          fi
+
+          # Dump the database with the state of the test failure to allow for
+          # local inspection.
+          # This pipes to `sudo tee` instead of outputting to a file directly because the main user can not access
+          # `behat-test-output` until we fix the UID of the runner in our containers.
+          # Even if you `sudo` the command then the output redirect would not happen as su.
+          docker compose run --no-deps --rm cli drush sql-dump | sudo tee behat-test-output/at-test-failure.sql > /dev/null
+
+          # Fix the owner of the files since they're now owned by the Docker container user but we really need them to
+          # be owned by the runner so we can create and move files and upload them with github actions.
+          # This has to be done until the UID/GID of the container match our runner.
+          sudo chown -R runner:runner behat-test-output
+
+      - name: Upload Behat Test Output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: applications/community_management_system/behat-test-output
+
+  # Until we overhaul Behat testing to work against a containerized version and can change how we parallelize tests
+  # (parallelizing within a Job rather than across jobs), we have to keep this in sync with the `behat` job.
+  # We avoid simplifying away from the `update` matrix because it makes spotting differences more difficult.
+  behat-update:
+    needs: [behat_feature_discovery, behat_install_open_social]
+
+    name: 'Behat Tests (Update)'
+    runs-on: [self-hosted, normal]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: ${{ fromJson(needs.behat_feature_discovery.outputs.features) }}
+        # This is a single value on purpose so it's configurable, due to GitHub limitations the non-`update` is tested
+        # in a separate job.
+        update:
+          - "update"
+        with_optional:
+          - ""
+        # @todo This doesn't work yet due to a bug in social_geolocation_maps
+        #  - "with-optional"
+
+    steps:
+      - name: Download Site
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}
+          key: ${{ github.run_id }}-test-setup-${{ matrix.update }}-${{ matrix.with_optional }}-${{ github.run_attempt }}
+          fail-on-cache-miss: true
+          # In case we're re-running a failed test then it's also okay to re-use
+          # a stored site from a previous run-attempt's install job.
+          restore-keys: |
+            ${{ github.run_id }}-test-setup-${{ matrix.update }}-${{ matrix.with_optional }}-
+
+      - name: Update Docker Compose
+        run: |
+          sudo mkdir -p /usr/lib/docker/cli-plugins \
+            && sudo curl -fsSL "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-linux-$(uname -m)" \
+              -o /usr/lib/docker/cli-plugins/docker-compose \
+            && sudo chmod +x /usr/lib/docker/cli-plugins/docker-compose \
+            && docker compose version
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Start product containers
+        uses: ./.github/actions/compose-up-down
+        with:
+          working-directory: applications/community_management_system
+
+        # This is needed until the correct UID/GID is set within the container.
+      - run: docker compose run --no-deps --rm cli chown -R www-data:www-data .
+        working-directory: applications/community_management_system
+
+      # We could run all tests at once by passing the folder directly to behat
+      # however, by doing this manually in a loop we have the ability to ensure
+      # each test runs against a clean database cheaply.
+      - name: Run Integration test
+        working-directory: applications/community_management_system
+        run: |
+          export TEST_DATABASE=/var/www/installation.sql
+          docker compose run --no-deps --rm cli behat --version
+
+          TEST_PATH="$(echo "${{ matrix.feature }}" | sed 's/install-profile/html\/profiles\/contrib\/social\/tests\/behat\/features\/capabilities/g' | sed 's/cms/tests\/behat\/features\/capabilities/g')"
+          for test in $TEST_PATH/*.feature; do
+            if head -n1 $test | grep -q "@disabled"; then
+              echo "$test - Skipping disabled test"
+              continue
+            fi
+
+            # If we're testing a clean install (i.e. not updating) then ignore
+            # any tests that have opted out of install testing.
+            if [[ -z "${{ matrix.update }}" ]]; then
+              export TAGS="--tags=~no-install"
+            # Do the same when we are testing with an update.
+            else
+              export TAGS="--tags=~no-update"
+            fi
+
+            # Tests with the @no-database tag import their own scaffold so they
+            # ignore the databases provided by our test matrix, that's why we
+            # only run them once when all our matrix values are off.
+            if [[ ! -z "${{ matrix.update }}" ]] || [[ ! -z "${{ matrix.with_optional }}" ]]; then
+              export TAGS="$TAGS&&~no-database"
+            fi
+
+            echo "::group::$test"
+            # Run in subshell to make the test command visible and copyable.
+            (set -x; docker compose run --no-deps --rm --env TEST_DATABASE cli behat -vv --config tests/behat/behat.yml --colors --allow-no-tests $TAGS $test)
+            echo "::endgroup::"
+          done
+
+      - name: Move test artifacts into upload folder
+        id: artifact-name
+        if: failure()
+        working-directory: applications/community_management_system
+        run: |
+          set -e
+
+          JOB_NAME="$(echo "${{ matrix.feature }}" | sed 's/\//--/g')"
+
+          # Generate the artifact name
+          if [[ ! -z "${{ matrix.update }}" ]] && [[ ! -z "${{ matrix.with_optional }}" ]]; then
+            echo "name=failed-test--update-with-optional--$JOB_NAME" >> $GITHUB_OUTPUT
+          elif [[ ! -z "${{ matrix.update }}" ]]; then
+            echo "name=failed-test--update--$JOB_NAME" >> $GITHUB_OUTPUT
+          elif [[ ! -z "${{ matrix.with_optional }}" ]]; then
+            echo "name=failed-test--with-optional--$JOB_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "name=failed-test--$JOB_NAME" >> $GITHUB_OUTPUT
+          fi
+
+          # Fix the owner of the files since they're now owned by the Docker container user but we really need them to
+          # be owned by the runner so we can create and move files and upload them with github actions.
+          # This has to be done until the UID/GID of the container match our runner.
+          sudo chown runner:runner .
+          sudo chown -R runner:runner tests/behat/logs
+
+          mkdir -p behat-test-output
+
+          # Move test results to the output folder if they exist
+          if (shopt -s nullglob; f=(tests/behat/logs/*); ((${#f[@]}))); then
+            # This runs with sudo until the UID of the GitHub worker runner and the UID/GID of www-data within the
+            # container are the same. See also the `sudo chown` down below.
+            sudo mv tests/behat/logs/* behat-test-output/
+          fi
+
+          # Dump the database with the state of the test failure to allow for
+          # local inspection.
+          # This pipes to `sudo tee` instead of outputting to a file directly because the main user can not access
+          # `behat-test-output` until we fix the UID of the runner in our containers.
+          # Even if you `sudo` the command then the output redirect would not happen as su.
+          docker compose run --no-deps --rm cli drush sql-dump | sudo tee behat-test-output/at-test-failure.sql > /dev/null
+
+          # Fix the owner of the files since they're now owned by the Docker container user but we really need them to
+          # be owned by the runner so we can create and move files and upload them with github actions.
+          # This has to be done until the UID/GID of the container match our runner.
+          sudo chown -R runner:runner behat-test-output
+
+      - name: Upload Behat Test Output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: applications/community_management_system/behat-test-output
+
+  ######################################################################################################################
+  # Section - Behat Gate                                                                                               #
+  #                                                                                                                    #
+  # Provides a single target for required status checks to work around our dynamic matrix.                             #
+  ######################################################################################################################
+  behat-result-aggregator:
+    name: Behat Result
+    runs-on: self-hosted
+    if: ${{ always() }}
+    needs:
+      - behat
+      - behat-update
+    outputs:
+      result: ${{ steps.aggregate.outputs.result }}
+    steps:
+      - id: aggregate
+        run: |
+          set -e
+          # Anything failed or was cancelled means our gate shouldn't pass.
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          # If nothing failed, nothing was cancelled and nothing succeeded, then all dependents were skipped.
+          elif [ "${{ !contains(needs.*.result, 'success') }}" == "true" ]; then
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+          # All the checks that applied were successful, so we succeeded.
+          else
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          fi
+
+  behat-gate:
+    name: Behat Gate
+    runs-on: self-hosted
+    needs:
+      - behat-result-aggregator
+    if: ${{ !cancelled() && needs.behat-result-aggregator.outputs.result != 'skipped' }}
+    steps:
+      - name: Behat test(s) failed or were cancelled
+        if: ${{ needs.behat-result-aggregator.outputs.result == 'failed' }}
+        run: exit 1
+      - name: All Behat tests succeeded
+        if: ${{ needs.behat-result-aggregator.outputs.result == 'success' }}
+        run: exit 0

@@ -1,0 +1,423 @@
+name: "[CMS] Create release artifact"
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  package:
+    name: Package
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Package Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'monorepo.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          patches/
+          scripts/releases/'
+
+      - name: Package IATA specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-iata.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/iata/
+          patches/
+          scripts/releases/
+          scripts/iata/'
+
+      - name: Package IUCN specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-iucn.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+         composer.lock
+         .gitignore
+         ../../events/kafka-topics.txt
+         html/modules/extensions/
+         html/modules/open_source/
+         html/profiles/contrib/social/
+         html/robots.txt
+         html/modules/projects/iucn/
+         patches/
+         scripts/releases/'
+
+      - name: Package SDG16 specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-sdg16.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/sdg16/
+          patches/
+          scripts/releases/'
+
+      - name: Package White Pine Circle specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-whitepinecircle.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/whitepinecircle/
+          patches/
+          scripts/releases/'
+
+      - name: Package FIFA specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-fifa.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/fifa/
+          patches/
+          scripts/releases/'
+
+      - name: Package Policy Kitchen specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-policykitchen.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/policykitchen/
+          patches/
+          scripts/releases/'
+
+      - name: Package WOSM specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-wosm.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/wosm/
+          patches/
+          scripts/releases/'
+
+      - name: Package ECDC COP specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-ecdc.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/ecdc/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Shared specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpshared.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Belgium specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpbelgium.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-belgium/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Brazil specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpbrazil.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-brazil/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP France specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpfrance.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-france/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Germany specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpgermany.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-germany/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Italy specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpitaly.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-italy/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Spain specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpspain.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-spain/
+          patches/
+          scripts/releases/'
+
+      - name: Package GP Switzerland specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-gpswitzerland.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/gp-shared/
+          html/modules/projects/gp-switzerland/
+          patches/
+          scripts/releases/'
+
+      - name: Package SparkBlue specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'customer-release-sparkblue.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/robots.txt
+          html/modules/projects/sparkblue/
+          patches/
+          scripts/releases/'
+
+      - name: Package concept specific Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'monorepo-with-concepts.tar.gz'
+          directory: applications/community_management_system/
+          path: 'composer.json
+          composer.lock
+          .gitignore
+          ../../events/kafka-topics.txt
+          html/modules/extensions/
+          html/modules/open_source/
+          html/profiles/contrib/social/
+          html/modules/concepts/
+          html/robots.txt
+          patches/
+          scripts/releases/'
+
+      - name: Package Convoy Bridge application
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'convoy-bridge.tar.gz'
+          directory: applications/convoy_bridge/
+          path: 'Cargo.toml
+          Cargo.lock
+          src/
+          .env.example'
+
+      - name: Package Engagement Studio application
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'engagement-studio.tar.gz'
+          directory: applications/engagement_studio/
+          path: 'composer.json
+          composer.lock
+          scripts/'
+
+      - name: Package Lumina Insights application
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'tar'
+          filename: 'lumina-insights.tar.gz'
+          directory: applications/lumina_insights/
+          path: 'clickhouse/data-gen/
+          clickhouse/init/
+          grafana/branding/
+          grafana/dashboards/
+          grafana/provisioning/'
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            applications/community_management_system/monorepo.tar.gz
+            applications/community_management_system/customer-release-iata.tar.gz
+            applications/community_management_system/customer-release-iucn.tar.gz
+            applications/community_management_system/customer-release-sdg16.tar.gz
+            applications/community_management_system/customer-release-whitepinecircle.tar.gz
+            applications/community_management_system/customer-release-fifa.tar.gz
+            applications/community_management_system/customer-release-policykitchen.tar.gz
+            applications/community_management_system/customer-release-wosm.tar.gz
+            applications/community_management_system/customer-release-ecdc.tar.gz
+            applications/community_management_system/customer-release-gpshared.tar.gz
+            applications/community_management_system/customer-release-gpbelgium.tar.gz
+            applications/community_management_system/customer-release-gpbrazil.tar.gz
+            applications/community_management_system/customer-release-gpfrance.tar.gz
+            applications/community_management_system/customer-release-gpgermany.tar.gz
+            applications/community_management_system/customer-release-gpitaly.tar.gz
+            applications/community_management_system/customer-release-gpspain.tar.gz
+            applications/community_management_system/customer-release-gpswitzerland.tar.gz
+            applications/community_management_system/customer-release-sparkblue.tar.gz
+            applications/community_management_system/monorepo-with-concepts.tar.gz
+            applications/convoy_bridge/convoy-bridge.tar.gz
+            applications/engagement_studio/engagement-studio.tar.gz
+            applications/lumina_insights/lumina-insights.tar.gz

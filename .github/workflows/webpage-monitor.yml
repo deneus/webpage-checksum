@@ -1,0 +1,55 @@
+name: Webpage Change Monitor
+
+on:
+  schedule:
+    # Run daily at 9:00 AM UTC
+    # You can customize this cron expression:
+    # Format: minute hour day month day-of-week
+    # Examples:
+    # - '0 9 * * *' - Daily at 9:00 AM UTC
+    # - '0 */6 * * *' - Every 6 hours
+    # - '0 9 * * 1-5' - Weekdays only at 9:00 AM UTC
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Download previous hash (if exists)
+        uses: actions/download-artifact@v4
+        with:
+          name: webpage-hash
+          path: .github/workflows/hash-storage
+          if-no-files-found: ignore
+        continue-on-error: true
+      
+      - name: Run webpage monitor
+        env:
+          WEBPAGE_URL: ${{ secrets.WEBPAGE_URL }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          STORAGE_DIR: .github/workflows/hash-storage
+        run: |
+          python3 webpage_monitor/check_webpage.py
+      
+      - name: Upload hash for next run
+        uses: actions/upload-artifact@v4
+        with:
+          name: webpage-hash
+          path: .github/workflows/hash-storage
+          retention-days: 90
+          if-no-files-found: ignore

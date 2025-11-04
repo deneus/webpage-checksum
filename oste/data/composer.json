@@ -1,0 +1,78 @@
+{
+  "name": "goalgorilla/potx-executor",
+  "description": "A Drupal 8 installation that allows you to run the POTX tool",
+  "type": "project",
+  "license": "proprietary",
+  "prefer-stable": true,
+  "config": {
+    "platform": {
+      "php": "8.1"
+    },
+    "sort-packages": true,
+    "allow-plugins": {
+      "composer/installers": true,
+      "drupal/console-extend-plugin": true,
+      "cweagans/composer-patches": true,
+      "oomphinc/composer-installers-extender": true,
+      "drupal/core-composer-scaffold": true
+    }
+  },
+  "require": {
+    "composer/installers": "^1.0",
+    "cweagans/composer-patches": "^1.0",
+    "drupal/core": "^10",
+    "drupal/core-composer-scaffold": "^10",
+    "drupal/potx": "1.0",
+    "drush/drush": "^12.0",
+    "oomphinc/composer-installers-extender": "^2.0"
+  },
+  "repositories": [
+    {
+      "type": "composer",
+      "url": "https://packages.drupal.org/8"
+    }
+  ],
+  "extra": {
+    "installer-types": [
+      "bower-asset",
+      "npm-asset"
+    ],
+    "drupal-scaffold": {
+      "locations": {
+        "web-root": "html/"
+      }
+    },
+    "installer-paths": {
+      "html/core": [
+        "type:drupal-core"
+      ],
+      "html/modules/contrib/{$name}": [
+        "type:drupal-module"
+      ],
+      "html/profiles/contrib/{$name}": [
+        "type:drupal-profile"
+      ],
+      "html/themes/contrib/{$name}": [
+        "type:drupal-theme"
+      ],
+      "html/libraries/{$name}": [
+        "type:drupal-library",
+        "type:bower-asset",
+        "type:npm-asset"
+      ],
+      "drush/contrib/{$name}": [
+        "type:drupal-drush"
+      ]
+    },
+    "enable-patching": true,
+    "patches": {
+      "drupal/potx": {
+        "Allow multiple folders to be extracted to a single file": "https://www.drupal.org/files/issues/2021-06-16/3025791-8.x-1.x-4.patch",
+        "Make sure we see what is maltransformed": "https://multiverse.getopensocial.com/download/patches/76/04ae79f2c89ee643f21727ec470fb60f29f0f55006b1aeb48532925d9ba27054/make-sure-we-see-which-element-has-invalid-data-when-extracting.patch"
+      }
+    }
+  },
+  "conflict": {
+    "drupal/drupal": "*"
+  }
+}

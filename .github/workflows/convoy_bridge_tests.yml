@@ -1,0 +1,77 @@
+name: Convoy Bridge Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'applications/convoy_bridge/**'
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - 'applications/convoy_bridge/**'
+jobs:
+  tests:
+    name: Run tests
+    runs-on: [self-hosted, normal]
+    defaults:
+      run:
+        working-directory: 'applications/convoy_bridge'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Install OpenSSL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
+          sudo apt-get install -y pkg-config
+          sudo apt-get install -y libssl-dev
+
+      - name: Install Clippy
+        run: rustup component add clippy
+
+      - name: Install Linker (LLD and Clang) and CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lld clang cmake
+
+      - name: Run Clippy
+        run: cargo clippy --all -- -D warnings
+
+      - name: Install Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose
+
+      - name: Start Docker Compose services
+        uses: ./.github/actions/compose-up-down
+        with:
+          working-directory: applications/convoy_bridge
+          compose-file: docker-compose.test.yml
+
+      - name: Wait for Kafka to be ready
+        run: |
+          MAX_RETRIES=10
+          RETRY_INTERVAL=5
+          for i in $(seq 1 $MAX_RETRIES); do
+              echo "Waiting for Kafka to be ready (attempt $i)..."
+              if docker compose -f docker-compose.test.yml exec broker kafka-topics \
+                  --bootstrap-server localhost:9092 \
+                  --list; then
+                  echo "Kafka is ready."
+                  exit 0
+              fi
+              sleep $RETRY_INTERVAL
+          done
+          echo "Kafka did not become ready in time."
+          exit 1
+
+      - name: Run test suite
+        run: ./scripts/test_suite.sh

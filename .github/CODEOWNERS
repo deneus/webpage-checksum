@@ -1,0 +1,24 @@
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+###############################################################
+# Customer Projects                                           #
+###############################################################
+/html/modules/projects/iata/ @goalgorilla/iata
+
+###############################################################
+# Release Scripts                                             #
+###############################################################
+/scripts/releases @ronaldtebrake @robertragas @bramtenhove @Kingdutch
+
+###############################################################
+# GitHub Workflows                                            #
+###############################################################
+.github/workflows @goalgorilla/infrastructure
+
+###############################################################
+# Compass Configurations                                      #
+#                                                             #
+# These are architectural definitions that require architect  #
+# sign-off for changing.                                      #
+###############################################################
+compass.yaml @Kingdutch

@@ -1,0 +1,47 @@
+# See the Conductor setup guide at https://packagist.com/docs/conductor/getting-started
+
+on:
+  repository_dispatch:
+    types:
+      - dependency_update
+
+name: Private Packagist Conductor
+
+permissions:
+  contents: write
+
+env:
+  # Allow composer scripts to automatically do things when we're in the CI. This enables us to automatically run
+  # propagate-to-extensions when Conductor has updated the root composer.json for example. Something we want to give
+  # developers control over outside the CI.
+  CI_PACKAGIST_CONDUCTOR: true
+
+jobs:
+  conductor:
+    name: Private Packagist Conductor
+    runs-on: [self-hosted, normal]
+    env:
+      COMPOSER_AUTH: '{"http-basic": {"repo.packagist.com": {"username": "token", "password": "${{secrets.COMPOSER_AUTH}}"}}}' # [tl! **]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install PHP
+        uses: "shivammathur/setup-php@v2"
+        with:
+          php-version: 8.3
+          extensions: bcmath, gd, gmp, soap
+        env:
+          runner: self-hosted
+          fail-fast: true
+
+      - name: Install NPM
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install patch
+        run: sudo apt install -y patch
+
+      - name: "Running Conductor"
+        uses: packagist/conductor-github-action@v1
