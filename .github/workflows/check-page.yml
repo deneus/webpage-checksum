@@ -9,6 +9,8 @@ on:
 jobs:
   check-page:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout repository
@@ -28,9 +30,12 @@ jobs:
       
       - name: Commit checksum file
         # Commit the checksum file if it was created or modified.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git add .checksum
           if ! git diff --staged --quiet; then
             git commit -m "Update checksum [skip ci]"

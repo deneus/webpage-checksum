@@ -146,6 +146,9 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
         sendWhatsAppNotification($whatsappPhone, "Checksum unchanged", $whatsappApiKey);
     }
+    else {
+        echo "WhatsApp credentials not configured. Skipping notification.\n";
+    }
     
     exit(0);
 }
