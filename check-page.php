@@ -57,6 +57,8 @@ if (!filter_var($url, FILTER_VALIDATE_URL)) {
 
 // File to store previous checksum.
 $checksumFile = __DIR__ . '/.checksum';
+echo "Checksum file path: {$checksumFile}\n";
+echo "File exists: " . (file_exists($checksumFile) ? 'yes' : 'no') . "\n";
 
 // Fetch the webpage HTML.
 $html = @file_get_contents($url);
@@ -74,6 +76,9 @@ $timestamp = date('Y-m-d H:i:s');
 $previousChecksum = null;
 if (file_exists($checksumFile)) {
     $previousChecksum = trim(file_get_contents($checksumFile));
+    echo "Previous checksum read from file: {$previousChecksum}\n";
+} else {
+    echo "No previous checksum file found.\n";
 }
 
 // Compare checksums.
@@ -84,7 +89,14 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     echo "Timestamp: {$timestamp}\n";
     
     // Store the new checksum.
-    file_put_contents($checksumFile, $checksum);
+    $writeResult = file_put_contents($checksumFile, $checksum);
+    if ($writeResult !== false) {
+        echo "Checksum written to file: {$checksum} ({$writeResult} bytes)\n";
+        echo "File exists after write: " . (file_exists($checksumFile) ? 'yes' : 'no') . "\n";
+        echo "File contents after write: " . trim(file_get_contents($checksumFile)) . "\n";
+    } else {
+        echo "ERROR: Failed to write checksum to file!\n";
+    }
     
     // Send WhatsApp notification.
     $whatsappPhone = getenv('CALLMEBOT_PHONE');
@@ -116,7 +128,14 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     exit(1);
 } elseif ($previousChecksum === null) {
     echo "First check - storing checksum: {$checksum}\n";
-    file_put_contents($checksumFile, $checksum);
+    $writeResult = file_put_contents($checksumFile, $checksum);
+    if ($writeResult !== false) {
+        echo "Checksum written to file: {$checksum} ({$writeResult} bytes)\n";
+        echo "File exists after write: " . (file_exists($checksumFile) ? 'yes' : 'no') . "\n";
+        echo "File contents after write: " . trim(file_get_contents($checksumFile)) . "\n";
+    } else {
+        echo "ERROR: Failed to write checksum to file!\n";
+    }
     exit(0);
 } else {
     echo "Checksum unchanged: {$checksum}\n";
