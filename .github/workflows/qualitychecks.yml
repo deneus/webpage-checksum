@@ -984,14 +984,14 @@ jobs:
 
       - name: Upload Behat Test Output
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: failed-install-${{ matrix.update }}-${{ matrix.with_optional }}
           path: behat-test-output
 
       - name: Upload install database
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: install-database-${{ matrix.update }}-${{ matrix.with_optional }}
           path: applications/community_management_system/installation.sql
@@ -1141,7 +1141,7 @@ jobs:
 
       - name: Upload Behat Test Output
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: applications/community_management_system/behat-test-output
@@ -1290,7 +1290,7 @@ jobs:
 
       - name: Upload Behat Test Output
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: applications/community_management_system/behat-test-output

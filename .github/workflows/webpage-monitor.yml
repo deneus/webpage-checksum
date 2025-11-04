@@ -47,7 +47,7 @@ jobs:
           python3 webpage_monitor/check_webpage.py
       
       - name: Upload hash for next run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: webpage-hash
           path: .github/workflows/hash-storage
