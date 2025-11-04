@@ -120,6 +120,14 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     exit(0);
 } else {
     echo "Checksum unchanged: {$checksum}\n";
+    
+    // Send test WhatsApp notification.
+    $whatsappPhone = getenv('CALLMEBOT_PHONE');
+    $whatsappApiKey = getenv('CALLMEBOT_API_KEY');
+    if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
+        sendWhatsAppNotification($whatsappPhone, "Checksum unchanged", $whatsappApiKey);
+    }
+    
     exit(0);
 }
 
