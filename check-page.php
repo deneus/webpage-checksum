@@ -158,6 +158,24 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
             echo "Failed to send WhatsApp notification.\n";
         }
     } else {
+        if (empty($whatsappPhone)) {
+            echo "WhatsApp phone number not configured. Skipping notification.\n";
+        }
+        else {
+            echo "whatsappPhone: $whatsappPhone";
+        }
+        if (empty($whatsappPhoneNumberId)) {
+            echo "WhatsApp phone number ID not configured. Skipping notification.\n";
+        }
+        else {
+            echo "whatsappPhoneNumberId: $whatsappPhoneNumberId";
+        }
+        if (empty($whatsappAccessToken)) {
+            echo "WhatsApp access token not configured. Skipping notification.\n";
+        }
+        else {
+            echo "whatsappAccessToken: $whatsappAccessToken";
+        }
         echo "WhatsApp credentials not configured. Skipping notification.\n";
     }
     
