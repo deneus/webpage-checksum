@@ -9,32 +9,68 @@
  */
 
 /**
- * Send WhatsApp notification using CallMeBot API.
+ * Send WhatsApp notification using Meta WhatsApp API.
  * 
- * @param string $phoneNumber Phone number with country code.
+ * @param string $toPhoneNumber Recipient phone number (with country code, no +).
  * @param string $message Message to send.
- * @param string $apiKey CallMeBot API key.
+ * @param string $phoneNumberId Meta WhatsApp phone number ID.
+ * @param string $accessToken Meta WhatsApp access token.
  * @return bool True if message sent successfully, false otherwise.
  */
-function sendWhatsAppNotification($phoneNumber, $message, $apiKey) {
-    if (empty($phoneNumber) || empty($apiKey)) {
-        error_log("Error: WhatsApp phone number or API key not provided.");
+function sendWhatsAppNotification($toPhoneNumber, $message, $phoneNumberId, $accessToken) {
+    if (empty($toPhoneNumber) || empty($phoneNumberId) || empty($accessToken)) {
+        error_log("Error: WhatsApp phone number, phone number ID, or access token not provided.");
         return false;
     }
     
+    // Remove + and any spaces from phone number.
+    $toPhoneNumber = preg_replace('/[^0-9]/', '', $toPhoneNumber);
+    
     // Build the API URL.
-    $apiUrl = sprintf(
-        'https://api.callmebot.com/whatsapp.php?phone=%s&text=%s&apikey=%s',
-        urlencode($phoneNumber),
-        urlencode($message),
-        urlencode($apiKey)
-    );
+    $apiUrl = "https://graph.facebook.com/v22.0/{$phoneNumberId}/messages";
     
-    // Send the request.
-    $response = @file_get_contents($apiUrl);
+    // Prepare the request payload.
+    // For custom text messages, we use the 'text' type instead of 'template'.
+    $payload = [
+        'messaging_product' => 'whatsapp',
+        'to' => $toPhoneNumber,
+        'type' => 'text',
+        'text' => [
+            'body' => $message
+        ]
+    ];
     
-    if ($response === false) {
-        error_log("Error: Failed to send WhatsApp notification.");
+    // Initialize cURL.
+    $ch = curl_init($apiUrl);
+    
+    // Set cURL options.
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $accessToken,
+            'Content-Type: application/json'
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_SSL_VERIFYPEER => true
+    ]);
+    
+    // Execute the request.
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    
+    curl_close($ch);
+    
+    // Check for cURL errors.
+    if ($response === false || !empty($curlError)) {
+        error_log("Error: Failed to send WhatsApp notification. cURL error: {$curlError}");
+        return false;
+    }
+    
+    // Check HTTP response code.
+    if ($httpCode < 200 || $httpCode >= 300) {
+        error_log("Error: WhatsApp API returned HTTP {$httpCode}. Response: {$response}");
         return false;
     }
     
@@ -99,10 +135,11 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     }
     
     // Send WhatsApp notification.
-    $whatsappPhone = getenv('CALLMEBOT_PHONE');
-    $whatsappApiKey = getenv('CALLMEBOT_API_KEY');
+    $whatsappPhone = getenv('WHATSAPP_PHONE');
+    $whatsappPhoneNumberId = getenv('WHATSAPP_PHONE_NUMBER_ID');
+    $whatsappAccessToken = getenv('WHATSAPP_ACCESS_TOKEN');
     
-    if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
+    if (!empty($whatsappPhone) && !empty($whatsappPhoneNumberId) && !empty($whatsappAccessToken)) {
         $message = sprintf(
             "🔔 Webpage Checksum Changed!\n\n" .
             "URL: %s\n" .
@@ -115,7 +152,7 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
             $checksum
         );
         
-        if (sendWhatsAppNotification($whatsappPhone, $message, $whatsappApiKey)) {
+        if (sendWhatsAppNotification($whatsappPhone, $message, $whatsappPhoneNumberId, $whatsappAccessToken)) {
             echo "WhatsApp notification sent successfully.\n";
         } else {
             echo "Failed to send WhatsApp notification.\n";
@@ -141,10 +178,11 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     echo "Checksum unchanged: {$checksum}\n";
     
     // Send test WhatsApp notification.
-    $whatsappPhone = getenv('CALLMEBOT_PHONE');
-    $whatsappApiKey = getenv('CALLMEBOT_API_KEY');
-    if (!empty($whatsappPhone) && !empty($whatsappApiKey)) {
-        sendWhatsAppNotification($whatsappPhone, "Checksum unchanged", $whatsappApiKey);
+    $whatsappPhone = getenv('WHATSAPP_PHONE');
+    $whatsappPhoneNumberId = getenv('WHATSAPP_PHONE_NUMBER_ID');
+    $whatsappAccessToken = getenv('WHATSAPP_ACCESS_TOKEN');
+    if (!empty($whatsappPhone) && !empty($whatsappPhoneNumberId) && !empty($whatsappAccessToken)) {
+        sendWhatsAppNotification($whatsappPhone, "Checksum unchanged", $whatsappPhoneNumberId, $whatsappAccessToken);
     }
     else {
         echo "WhatsApp credentials not configured. Skipping notification.\n";
