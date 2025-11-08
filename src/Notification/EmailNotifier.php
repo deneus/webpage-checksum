@@ -53,11 +53,6 @@ class EmailNotifier implements NotificationInterface
             return false;
         }
 
-        $this->output->write("Attempting to send email...");
-        $this->output->write("To: {$this->recipient}");
-        $this->output->write("From: {$this->from}");
-        $this->output->write("Subject: {$subject}");
-
         try {
             $mail = new PHPMailer(true);
 
@@ -76,23 +71,9 @@ class EmailNotifier implements NotificationInterface
                 } else {
                     $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                 }
-
-                // Enable verbose debugging for SMTP.
-                $mail->SMTPDebug = 0; // Set to 2 for detailed debugging.
-                $mail->Debugoutput = function ($str, $level) {
-                    // Only output errors, not all debug info.
-                    if (strpos($str, 'Error') !== false || strpos($str, 'Failed') !== false) {
-                        error_log("SMTP Debug: {$str}");
-                    }
-                };
-
-                $this->output->write("Using SMTP: {$this->smtpHost}:{$mail->Port}");
-                $this->output->write("SMTP Username: {$this->smtpUsername}");
-                $this->output->write("SMTP Encryption: {$mail->SMTPSecure}");
             } else {
                 // Use PHP mail() function.
                 $mail->isMail();
-                $this->output->write("Using PHP mail() function (SMTP not configured)");
             }
 
             // Set email details.
@@ -109,36 +90,12 @@ class EmailNotifier implements NotificationInterface
 
             // Send email.
             $mail->send();
-            $this->output->write("Email sent successfully!");
 
             return true;
         } catch (Exception $e) {
             $errorInfo = isset($mail) ? $mail->ErrorInfo : 'Unknown error';
             $this->output->writeError("Failed to send email: {$errorInfo}");
             $this->output->writeError("Exception: {$e->getMessage()}");
-            
-            // Provide helpful troubleshooting information for authentication errors.
-            if (strpos($errorInfo, 'authenticate') !== false || strpos($e->getMessage(), 'authenticate') !== false) {
-                $this->output->writeError("");
-                $this->output->writeError("SMTP Authentication Troubleshooting:");
-                $this->output->writeError("1. You MUST use an App Password, not your regular password.");
-                $this->output->writeError("2. Enable 2-factor authentication in your email account.");
-                $this->output->writeError("3. Use the full email address as SMTP_USERNAME.");
-                $this->output->writeError("");
-                $this->output->writeError("For Gmail:");
-                $this->output->writeError("   - Generate App Password: https://myaccount.google.com/apppasswords");
-                $this->output->writeError("   - SMTP_HOST: smtp.gmail.com");
-                $this->output->writeError("   - SMTP_PORT: 587");
-                $this->output->writeError("   - SMTP_ENCRYPTION: tls");
-                $this->output->writeError("");
-                $this->output->writeError("For Hotmail/Outlook:");
-                $this->output->writeError("   - Generate App Password: https://account.microsoft.com/security");
-                $this->output->writeError("   - SMTP_HOST: smtp-mail.outlook.com");
-                $this->output->writeError("   - SMTP_PORT: 587");
-                $this->output->writeError("   - SMTP_ENCRYPTION: tls");
-                $this->output->writeError("");
-                $this->output->writeError("4. Verify your SMTP credentials are correct in GitHub Secrets.");
-            }
             
             return false;
         }
