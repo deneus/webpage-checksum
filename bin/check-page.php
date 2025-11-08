@@ -45,10 +45,28 @@ $formatter = new MessageFormatter();
 $notifier = null;
 $emailTo = getenv('EMAIL_TO') ?: 'deneus18@hotmail.com';
 $emailFrom = getenv('EMAIL_FROM') ?: 'deneus18@hotmail.com';
-$emailReplyTo = getenv('EMAIL_REPLY_TO');
+$emailReplyToEnv = getenv('EMAIL_REPLY_TO');
+$emailReplyTo = ($emailReplyToEnv !== false && !empty($emailReplyToEnv)) ? $emailReplyToEnv : null;
+
+// SMTP configuration (optional - if not set, uses PHP mail()).
+$smtpHost = getenv('SMTP_HOST');
+$smtpPort = getenv('SMTP_PORT') ? (int)getenv('SMTP_PORT') : null;
+$smtpUsername = getenv('SMTP_USERNAME');
+$smtpPassword = getenv('SMTP_PASSWORD');
+$smtpEncryption = getenv('SMTP_ENCRYPTION'); // 'tls' or 'ssl'
 
 if (!empty($emailTo)) {
-    $notifier = new EmailNotifier($emailTo, $emailFrom, $emailReplyTo, $output);
+    $notifier = new EmailNotifier(
+        $emailTo,
+        $emailFrom,
+        $emailReplyTo,
+        $output,
+        $smtpHost !== false ? $smtpHost : null,
+        $smtpPort,
+        $smtpUsername !== false ? $smtpUsername : null,
+        $smtpPassword !== false ? $smtpPassword : null,
+        $smtpEncryption !== false ? $smtpEncryption : null
+    );
     $notifier->send("Test", "Test");
 }
 
