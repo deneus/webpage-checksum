@@ -5,72 +5,43 @@
  * 
  * Fetches HTML from a webpage and calculates its checksum.
  * Compares with previous checksum to detect changes.
- * Sends WhatsApp notification when checksum changes.
+ * Sends email notification when checksum changes.
  */
 
 /**
- * Send WhatsApp notification using Meta WhatsApp API.
+ * Send email notification.
  * 
- * @param string $toPhoneNumber Recipient phone number (with country code, no +).
- * @param string $message Message to send.
- * @param string $phoneNumberId Meta WhatsApp phone number ID.
- * @param string $accessToken Meta WhatsApp access token.
- * @return bool True if message sent successfully, false otherwise.
+ * @param string $to Recipient email address.
+ * @param string $subject Email subject.
+ * @param string $message Email message body.
+ * @return bool True if email sent successfully, false otherwise.
  */
-function sendWhatsAppNotification($toPhoneNumber, $message, $phoneNumberId, $accessToken) {
-    if (empty($toPhoneNumber) || empty($phoneNumberId) || empty($accessToken)) {
-        error_log("Error: WhatsApp phone number, phone number ID, or access token not provided.");
+function sendEmailNotification($to, $subject, $message) {
+    if (empty($to)) {
+        error_log("Error: Email recipient not provided.");
         return false;
     }
     
-    // Remove + and any spaces from phone number.
-    $toPhoneNumber = preg_replace('/[^0-9]/', '', $toPhoneNumber);
+    // Validate email address.
+    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
+        error_log("Error: Invalid email address: {$to}");
+        return false;
+    }
     
-    // Build the API URL.
-    $apiUrl = "https://graph.facebook.com/v22.0/{$phoneNumberId}/messages";
-    
-    // Prepare the request payload.
-    // For custom text messages, we use the 'text' type instead of 'template'.
-    $payload = [
-        'messaging_product' => 'whatsapp',
-        'to' => $toPhoneNumber,
-        'type' => 'text',
-        'text' => [
-            'body' => $message
-        ]
+    // Set email headers.
+    $headers = [
+        'From: ' . 'deneus18@hotmail.com',
+        'Reply-To: ' . (getenv('EMAIL_REPLY_TO') ?: 'noreply@localhost'),
+        'X-Mailer: PHP/' . phpversion(),
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8'
     ];
     
-    // Initialize cURL.
-    $ch = curl_init($apiUrl);
+    // Send the email.
+    $result = @mail($to, $subject, $message, implode("\r\n", $headers));
     
-    // Set cURL options.
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Bearer ' . $accessToken,
-            'Content-Type: application/json'
-        ],
-        CURLOPT_POSTFIELDS => json_encode($payload),
-        CURLOPT_SSL_VERIFYPEER => true
-    ]);
-    
-    // Execute the request.
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    
-    curl_close($ch);
-    
-    // Check for cURL errors.
-    if ($response === false || !empty($curlError)) {
-        error_log("Error: Failed to send WhatsApp notification. cURL error: {$curlError}");
-        return false;
-    }
-    
-    // Check HTTP response code.
-    if ($httpCode < 200 || $httpCode >= 300) {
-        error_log("Error: WhatsApp API returned HTTP {$httpCode}. Response: {$response}");
+    if (!$result) {
+        error_log("Error: Failed to send email notification.");
         return false;
     }
     
@@ -134,49 +105,30 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
         echo "ERROR: Failed to write checksum to file!\n";
     }
     
-    // Send WhatsApp notification.
-    $whatsappPhone = getenv('WHATSAPP_PHONE');
-    $whatsappPhoneNumberId = getenv('WHATSAPP_PHONE_NUMBER_ID');
-    $whatsappAccessToken = getenv('WHATSAPP_ACCESS_TOKEN');
+    // Send email notification.
+    $emailTo = getenv('EMAIL_TO');
     
-    if (!empty($whatsappPhone) && !empty($whatsappPhoneNumberId) && !empty($whatsappAccessToken)) {
+    if (!empty($emailTo)) {
+        $subject = "Webpage Checksum Changed - {$url}";
         $message = sprintf(
-            "🔔 Webpage Checksum Changed!\n\n" .
+            "Webpage Checksum Changed!\n\n" .
             "URL: %s\n" .
             "Date: %s\n" .
-            "Previous: %s\n" .
-            "Current: %s",
+            "Previous Checksum: %s\n" .
+            "Current Checksum: %s\n",
             $url,
             $timestamp,
             $previousChecksum,
             $checksum
         );
         
-        if (sendWhatsAppNotification($whatsappPhone, $message, $whatsappPhoneNumberId, $whatsappAccessToken)) {
-            echo "WhatsApp notification sent successfully.\n";
+        if (sendEmailNotification($emailTo, $subject, $message)) {
+            echo "Email notification sent successfully.\n";
         } else {
-            echo "Failed to send WhatsApp notification.\n";
+            echo "Failed to send email notification.\n";
         }
     } else {
-        if (empty($whatsappPhone)) {
-            echo "WhatsApp phone number not configured. Skipping notification.\n";
-        }
-        else {
-            echo "whatsappPhone: $whatsappPhone";
-        }
-        if (empty($whatsappPhoneNumberId)) {
-            echo "WhatsApp phone number ID not configured. Skipping notification.\n";
-        }
-        else {
-            echo "whatsappPhoneNumberId: $whatsappPhoneNumberId";
-        }
-        if (empty($whatsappAccessToken)) {
-            echo "WhatsApp access token not configured. Skipping notification.\n";
-        }
-        else {
-            echo "whatsappAccessToken: $whatsappAccessToken";
-        }
-        echo "WhatsApp credentials not configured. Skipping notification.\n";
+        echo "Email recipient not configured. Skipping notification.\n";
     }
     
     // Exit with code 1 to indicate change (can be used in CI/CD).
@@ -194,18 +146,6 @@ if ($previousChecksum !== null && $previousChecksum !== $checksum) {
     exit(0);
 } else {
     echo "Checksum unchanged: {$checksum}\n";
-    
-    // Send test WhatsApp notification.
-    $whatsappPhone = getenv('WHATSAPP_PHONE');
-    $whatsappPhoneNumberId = getenv('WHATSAPP_PHONE_NUMBER_ID');
-    $whatsappAccessToken = getenv('WHATSAPP_ACCESS_TOKEN');
-    if (!empty($whatsappPhone) && !empty($whatsappPhoneNumberId) && !empty($whatsappAccessToken)) {
-        sendWhatsAppNotification($whatsappPhone, "Checksum unchanged", $whatsappPhoneNumberId, $whatsappAccessToken);
-    }
-    else {
-        echo "WhatsApp credentials not configured. Skipping notification.\n";
-    }
-    
     exit(0);
 }
 
