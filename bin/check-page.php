@@ -67,7 +67,28 @@ if (!empty($emailTo)) {
         $smtpPassword !== false ? $smtpPassword : null,
         $smtpEncryption !== false ? $smtpEncryption : null
     );
-    $notifier->send("Test", "Test");
+    
+    // Send test email only once per week.
+    $testEmailFile = __DIR__ . '/../.test-email-timestamp';
+    $shouldSendTest = false;
+    
+    if (file_exists($testEmailFile)) {
+        $lastTestTimestamp = (int)trim(file_get_contents($testEmailFile));
+        $oneWeekAgo = time() - (7 * 24 * 60 * 60); // 7 days in seconds.
+        
+        if ($lastTestTimestamp < $oneWeekAgo) {
+            $shouldSendTest = true;
+        }
+    } else {
+        // First time, send test email.
+        $shouldSendTest = true;
+    }
+    
+    if ($shouldSendTest) {
+        $notifier->send("Test", "Test");
+        // Update timestamp.
+        file_put_contents($testEmailFile, (string)time());
+    }
 }
 
 // Create checker and run.

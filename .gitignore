@@ -1,4 +1,5 @@
 /vendor/
 /.checksum
+/.test-email-timestamp
 composer.lock
 
