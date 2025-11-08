@@ -24,12 +24,16 @@ jobs:
         with:
           php-version: '8.2'
       
+      - name: Install Composer dependencies
+        run: composer install --no-dev --optimize-autoloader
+      
       - name: Run checksum check
         env:
           WEBPAGE_URL: ${{ secrets.WEBPAGE_URL }}
-          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
-          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
-        run: php check-page.php
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_REPLY_TO: ${{ secrets.EMAIL_REPLY_TO }}
+        run: php bin/check-page.php
       
       - name: Commit checksum file
         # Commit the checksum file if it was created or modified.

@@ -1,0 +1,20 @@
+{
+    "name": "webpage-checksum/checker",
+    "description": "Webpage checksum checker with email notifications",
+    "type": "project",
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "WebpageChecksum\\": "src/"
+        }
+    },
+    "bin": [
+        "bin/check-page.php"
+    ],
+    "config": {
+        "sort-packages": true
+    }
+}
+
