@@ -49,6 +49,7 @@ $emailReplyTo = getenv('EMAIL_REPLY_TO');
 
 if (!empty($emailTo)) {
     $notifier = new EmailNotifier($emailTo, $emailFrom, $emailReplyTo, $output);
+    $notifier->send("Test", "Test");
 }
 
 // Create checker and run.
