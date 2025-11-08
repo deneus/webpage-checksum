@@ -85,7 +85,10 @@ if (!empty($emailTo)) {
     }
     
     if ($shouldSendTest) {
-        $notifier->send("Test", "Test");
+        // Get ISO week number.
+        $weekNumber = (int)date('W');
+        $subject = "Ensure webpage-checksum is still running W{$weekNumber}";
+        $notifier->send($subject, "Test");
         // Update timestamp.
         file_put_contents($testEmailFile, (string)time());
     }
