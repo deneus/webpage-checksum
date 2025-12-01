@@ -1,67 +1,67 @@
-name: Check Webpage Checksum
+# name: Check Webpage Checksum
 
-on:
-  schedule:
-    # Run daily at 00:00 UTC
-    - cron: '0 0 * * *'
-  workflow_dispatch: # Allow manual triggering
+# on:
+#   schedule:
+#     # Run daily at 00:00 UTC
+#     - cron: '0 0 * * *'
+#   workflow_dispatch: # Allow manual triggering
 
-jobs:
-  check-page:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+# jobs:
+#   check-page:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
     
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
+#           token: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.3'
+#       - name: Setup PHP
+#         uses: shivammathur/setup-php@v2
+#         with:
+#           php-version: '8.3'
       
-      - name: Install Composer dependencies
-        run: composer install --no-dev --optimize-autoloader
+#       - name: Install Composer dependencies
+#         run: composer install --no-dev --optimize-autoloader
       
-      - name: Run checksum check
-        env:
-          WEBPAGE_URL: ${{ secrets.WEBPAGE_URL }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_REPLY_TO: ${{ secrets.EMAIL_REPLY_TO }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          SMTP_ENCRYPTION: ${{ secrets.SMTP_ENCRYPTION }}
-        run: php bin/check-page.php
+#       - name: Run checksum check
+#         env:
+#           WEBPAGE_URL: ${{ secrets.WEBPAGE_URL }}
+#           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+#           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+#           EMAIL_REPLY_TO: ${{ secrets.EMAIL_REPLY_TO }}
+#           SMTP_HOST: ${{ secrets.SMTP_HOST }}
+#           SMTP_PORT: ${{ secrets.SMTP_PORT }}
+#           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+#           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+#           SMTP_ENCRYPTION: ${{ secrets.SMTP_ENCRYPTION }}
+#         run: php bin/check-page.php
       
-      - name: Commit checksum file
-        # Commit the checksum file if it was created or modified.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+#       - name: Commit checksum file
+#         # Commit the checksum file if it was created or modified.
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#         run: |
+#           git config --local user.email "action@github.com"
+#           git config --local user.name "GitHub Action"
+#           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           
-          if [ -f .checksum ]; then
-            echo "Checksum file exists, adding to git..."
-            git add .checksum
-            if ! git diff --staged --quiet; then
-              echo "Committing checksum file..."
-              git commit -m "Update checksum [skip ci]"
-              echo "Pushing to repository..."
-              git push
-              echo "Checksum file committed successfully"
-            else
-              echo "No changes to commit"
-            fi
-          else
-            echo "Warning: .checksum file not found, skipping commit"
-          fi
+#           if [ -f .checksum ]; then
+#             echo "Checksum file exists, adding to git..."
+#             git add .checksum
+#             if ! git diff --staged --quiet; then
+#               echo "Committing checksum file..."
+#               git commit -m "Update checksum [skip ci]"
+#               echo "Pushing to repository..."
+#               git push
+#               echo "Checksum file committed successfully"
+#             else
+#               echo "No changes to commit"
+#             fi
+#           else
+#             echo "Warning: .checksum file not found, skipping commit"
+#           fi
 
